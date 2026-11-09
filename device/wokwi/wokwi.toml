@@ -1,0 +1,16 @@
+# Wokwi simulation project for the Nota voice button.
+#
+# Run it:
+#   browser  -> https://wokwi.com/projects/new/esp32 and paste diagram.json
+#   VS Code  -> install the "Wokwi Simulator" extension, open this folder, F1
+#
+# Wokwi needs a compiled firmware; PlatformIO produces it (see platformio.ini).
+
+[wokwi]
+version = 1
+firmware = "../firmware/.pio/build/esp32dev/firmware.bin"
+elf = "../firmware/.pio/build/esp32dev/firmware.elf"
+
+# The backend runs on the host. Wokwi exposes the host loopback as this name.
+[net]
+forward = ["8787"]

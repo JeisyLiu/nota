@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="700" viewBox="0 0 980 700" font-family="'Segoe UI','Microsoft YaHei',sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9ca3af"/>
+    </marker>
+    <marker id="aR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f87171"/>
+    </marker>
+    <marker id="aG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6ee7b7"/>
+    </marker>
+  </defs>
+  <rect width="980" height="700" fill="#0f1115"/>
+
+  <text x="30" y="34" fill="#e6e8ee" font-size="15">提交一条语音 → 生成摘要 / 待办 / 提醒（含额度预占与审批）</text>
+
+  <!-- lifelines -->
+  <g font-size="12" text-anchor="middle">
+    <rect x="30"  y="56" width="120" height="34" rx="6" fill="#171a21" stroke="#2a2f3a"/><text x="90"  y="78" fill="#e6e8ee">Client</text>
+    <rect x="200" y="56" width="120" height="34" rx="6" fill="#141b22" stroke="#38bdf8" stroke-opacity=".5"/><text x="260" y="78" fill="#38bdf8">API</text>
+    <rect x="370" y="56" width="120" height="34" rx="6" fill="#141b22" stroke="#6ee7b7" stroke-opacity=".5"/><text x="430" y="78" fill="#6ee7b7">ingest</text>
+    <rect x="540" y="56" width="120" height="34" rx="6" fill="#141b22" stroke="#fbbf24" stroke-opacity=".5"/><text x="600" y="78" fill="#fbbf24">SQLite</text>
+    <rect x="710" y="56" width="110" height="34" rx="6" fill="#141b22" stroke="#6ee7b7" stroke-opacity=".5"/><text x="765" y="78" fill="#6ee7b7">worker</text>
+    <rect x="850" y="56" width="100" height="34" rx="6" fill="#141b22" stroke="#a78bfa" stroke-opacity=".5"/><text x="900" y="78" fill="#a78bfa">Agent</text>
+  </g>
+
+  <g stroke="#2a2f3a" stroke-dasharray="3 4">
+    <line x1="90"  y1="90" x2="90"  y2="670"/>
+    <line x1="260" y1="90" x2="260" y2="670"/>
+    <line x1="430" y1="90" x2="430" y2="670"/>
+    <line x1="600" y1="90" x2="600" y2="670"/>
+    <line x1="765" y1="90" x2="765" y2="670"/>
+    <line x1="900" y1="90" x2="900" y2="670"/>
+  </g>
+
+  <g font-size="11" fill="#b8c0d4">
+    <!-- 1 -->
+    <line x1="90" y1="120" x2="256" y2="120" stroke="#9ca3af" marker-end="url(#a)"/>
+    <text x="96" y="114">POST /api/notes/audio (idem key)</text>
+    <!-- 2 -->
+    <line x1="260" y1="150" x2="426" y2="150" stroke="#9ca3af" marker-end="url(#a)"/>
+    <text x="266" y="144">ingest(note, idempotency_key)</text>
+
+    <!-- 3 self: tx -->
+    <rect x="360" y="166" width="200" height="56" rx="6" fill="#10131a" stroke="#fbbf24" stroke-opacity=".5"/>
+    <text x="368" y="184" fill="#fbbf24">BEGIN IMMEDIATE</text>
+    <text x="368" y="200">insert note / job</text>
+    <text x="368" y="214">reserve +1 (conditional)</text>
+
+    <line x1="430" y1="240" x2="596" y2="240" stroke="#9ca3af" marker-end="url(#a)"/>
+    <text x="436" y="234">同一事务写入</text>
+
+    <!-- 5 alt quota exceeded -->
+    <line x1="600" y1="274" x2="434" y2="274" stroke="#f87171" marker-end="url(#aR)"/>
+    <text x="440" y="268" fill="#f87171">SUM(delta) &gt;= limit → 回滚</text>
+    <line x1="430" y1="300" x2="264" y2="300" stroke="#f87171" marker-end="url(#aR)"/>
+    <line x1="260" y1="324" x2="94" y2="324" stroke="#f87171" marker-end="url(#aR)"/>
+    <text x="100" y="318" fill="#f87171">429 {used, limit, reset_at}</text>
+
+    <!-- 8 happy path commit -->
+    <line x1="600" y1="352" x2="434" y2="352" stroke="#6ee7b7" marker-end="url(#aG)"/>
+    <text x="440" y="346" fill="#6ee7b7">COMMIT</text>
+    <line x1="430" y1="376" x2="264" y2="376" stroke="#9ca3af" marker-end="url(#a)"/>
+    <text x="270" y="370">{job_id, quota}</text>
+    <line x1="260" y1="400" x2="94" y2="400" stroke="#9ca3af" marker-end="url(#a)"/>
+    <text x="100" y="394">202 {job_id} · replayed</text>
+
+    <!-- worker picks up -->
+    <line x1="765" y1="430" x2="604" y2="430" stroke="#9ca3af" marker-end="url(#a)"/>
+    <text x="612" y="424">claim_next_job() → transcribing</text>
+
+    <!-- STT + agent -->
+    <line x1="765" y1="458" x2="896" y2="458" stroke="#9ca3af" marker-end="url(#a)"/>
+    <text x="700" y="452">agent_running</text>
+    <line x1="900" y1="486" x2="604" y2="486" stroke="#9ca3af" marker-end="url(#a)"/>
+    <text x="612" y="480">每个 step 写入 agent_steps</text>
+
+    <!-- irreversible -->
+    <rect x="790" y="502" width="176" height="46" rx="6" fill="#2a2416" stroke="#fbbf24" stroke-opacity=".6"/>
+    <text x="798" y="520" fill="#fbbf24">IRREVERSIBLE →</text>
+    <text x="798" y="536" fill="#fbbf24">pending_actions 挂起</text>
+
+    <!-- SSE to client -->
+    <line x1="260" y1="570" x2="94" y2="570" stroke="#38bdf8" marker-end="url(#a)" stroke-dasharray="5 3"/>
+    <text x="100" y="564" fill="#38bdf8">SSE: step / state 推送</text>
+
+    <!-- failure -->
+    <line x1="765" y1="600" x2="604" y2="600" stroke="#f87171" marker-end="url(#aR)" stroke-dasharray="5 3"/>
+    <text x="612" y="594" fill="#f87171">3 次失败 → failed + 退款 -1</text>
+    <line x1="600" y1="628" x2="264" y2="628" stroke="#9ca3af" marker-end="url(#a)" stroke-dasharray="5 3"/>
+    <line x1="260" y1="652" x2="94" y2="652" stroke="#9ca3af" marker-end="url(#a)" stroke-dasharray="5 3"/>
+    <text x="100" y="646">GET /api/jobs/{id} → done | failed</text>
+  </g>
+
+  <text x="950" y="686" fill="#4b5563" font-size="10" text-anchor="end">nota / docs/architecture.md</text>
+</svg>

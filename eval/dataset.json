@@ -1,0 +1,246 @@
+{
+  "version": 1,
+  "now": "2026-11-09T10:00:00+08:00",
+  "tz": "Asia/Shanghai",
+  "notes": [
+    {
+      "id": "n01",
+      "text": "明天下午三点提醒我给张总发报价单",
+      "expect": {
+        "reminders": [
+          {
+            "title_contains": "报价",
+            "fire_at": "2026-11-10T15:00"
+          }
+        ],
+        "todos": [
+          {
+            "title_contains": "报价"
+          }
+        ],
+        "must_not": []
+      }
+    },
+    {
+      "id": "n02",
+      "text": "下周三上午十点跟设计团队评审新版原型",
+      "expect": {
+        "todos": [
+          {
+            "title_contains": "原型",
+            "due_at": "2026-11-18T10:00"
+          }
+        ],
+        "reminders": []
+      }
+    },
+    {
+      "id": "n03",
+      "text": "记得买牛奶和鸡蛋，顺便取快递",
+      "expect": {
+        "todos": [
+          {
+            "title_contains": "牛奶"
+          }
+        ],
+        "reminders": []
+      }
+    },
+    {
+      "id": "n04",
+      "text": "今天开了个会，聊了下季度排期，整体还行",
+      "expect": {
+        "todos": [],
+        "reminders": [],
+        "comment": "纯陈述，不应凭空造待办"
+      }
+    },
+    {
+      "id": "n05",
+      "text": "周三下午两点半提醒我交周报",
+      "expect": {
+        "reminders": [
+          {
+            "title_contains": "周报",
+            "fire_at": "2026-11-11T14:30"
+          }
+        ],
+        "todos": [
+          {
+            "title_contains": "周报"
+          }
+        ],
+        "comment": "提醒之外还要留一条待办：提醒是一次性的，待办会留在列表里"
+      }
+    },
+    {
+      "id": "n06",
+      "text": "晚上七点提醒我吃药",
+      "expect": {
+        "reminders": [
+          {
+            "title_contains": "吃药",
+            "fire_at": "2026-11-09T19:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n07",
+      "text": "后天 14:30 跟供应商对账",
+      "expect": {
+        "todos": [
+          {
+            "title_contains": "对账",
+            "due_at": "2026-11-11T14:30"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n08",
+      "text": "下下周一早上九点给团队做季度复盘",
+      "expect": {
+        "todos": [
+          {
+            "title_contains": "复盘",
+            "due_at": "2026-11-23T09:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n09",
+      "text": "帮我把报销单整理一下，这周五之前交",
+      "expect": {
+        "todos": [
+          {
+            "title_contains": "报销"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n10",
+      "text": "明天中午十二点提醒我预约牙医",
+      "expect": {
+        "reminders": [
+          {
+            "title_contains": "牙医",
+            "fire_at": "2026-11-10T12:00"
+          }
+        ],
+        "todos": [
+          {
+            "title_contains": "牙医"
+          }
+        ],
+        "comment": "提醒之外还要留一条待办：提醒是一次性的，待办会留在列表里"
+      }
+    },
+    {
+      "id": "n11",
+      "text": "下周一把合同发给法务",
+      "expect": {
+        "todos": [
+          {
+            "title_contains": "合同",
+            "due_at": "2026-11-16T09:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n12",
+      "text": "这周五晚上八点提醒我抢演唱会门票",
+      "expect": {
+        "reminders": [
+          {
+            "title_contains": "门票",
+            "fire_at": "2026-11-13T20:00"
+          }
+        ],
+        "todos": [
+          {
+            "title_contains": "门票"
+          }
+        ],
+        "comment": "提醒之外还要留一条待办：提醒是一次性的，待办会留在列表里"
+      }
+    },
+    {
+      "id": "n13",
+      "text": "客户说方案还要再改一版，下周二前给回复",
+      "expect": {
+        "todos": [
+          {
+            "title_contains": "回复",
+            "due_at": "2026-11-17T09:00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n14",
+      "text": "买咖啡豆",
+      "expect": {
+        "todos": [
+          {
+            "title_contains": "咖啡"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n15",
+      "text": "上午十点提醒我远程面试候选人",
+      "expect": {
+        "reminders": [
+          {
+            "title_contains": "面试",
+            "fire_at": "2026-11-09T10:00"
+          }
+        ],
+        "comment": "提醒之外还要留一条待办：提醒是一次性的，待办会留在列表里",
+        "todos": [
+          {
+            "title_contains": "面试"
+          }
+        ]
+      }
+    }
+  ],
+  "ask": [
+    {
+      "id": "q01",
+      "question": "上次给张总的报价单是什么",
+      "expect_note": "n01",
+      "must_cite": true
+    },
+    {
+      "id": "q02",
+      "question": "我是不是说过要买牛奶",
+      "expect_note": "n03",
+      "must_cite": true
+    },
+    {
+      "id": "q03",
+      "question": "报销单什么时候交",
+      "expect_note": "n09",
+      "must_cite": true
+    },
+    {
+      "id": "q04",
+      "question": "关于火星殖民我上次说了什么",
+      "expect_note": null,
+      "must_cite": false,
+      "comment": "库里没有，必须承认没有，不能编"
+    },
+    {
+      "id": "q05",
+      "question": "牙医预约是几点",
+      "expect_note": "n10",
+      "must_cite": true
+    }
+  ]
+}

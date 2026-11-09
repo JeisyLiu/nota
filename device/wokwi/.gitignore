@@ -1,0 +1,4 @@
+build/
+.pio/
+firmware.bin
+firmware.elf

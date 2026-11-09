@@ -1,0 +1,58 @@
+# Local runtime data — never commit
+data/
+*.db
+*.db-wal
+*.db-shm
+*.wav
+*.mp3
+*.m4a
+*.webm
+*.ogg
+*.ics
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Secrets
+.env
+.env.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+
+# Node (web is build-free, but keep clean)
+node_modules/
+
+# Flutter / Dart
+app/nota_app/.dart_tool/
+app/nota_app/build/
+app/nota_app/.flutter-plugins
+app/nota_app/.flutter-plugins-dependencies
+app/nota_app/.packages
+app/nota_app/.idea/
+app/nota_app/*.iml
+app/nota_app/android/.gradle/
+app/nota_app/android/local.properties
+app/nota_app/android/**/build/
+app/nota_app/android/.cxx/
+
+# Models downloaded at runtime (STT weights land inside the data dir, which is
+# already ignored; this catches a stray top-level cache without accidentally
+# matching source packages such as app/nota_app/lib/models/)
+/models/
+.whisper/
+*.bin

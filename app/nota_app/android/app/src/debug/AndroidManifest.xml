@@ -1,0 +1,12 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The INTERNET permission is required for development. Specifically,
+         the Flutter tool needs it to communicate with the running application
+         to allow setting breakpoints, to provide hot reload, etc.
+    -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
+    <!-- 本地后端默认是 http://10.0.2.2:8787（明文 HTTP）。
+         Android 9+ 默认禁止明文流量，所以只在 debug 变体里放开；
+         release 构建不含这一项，必须走 https。 -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>

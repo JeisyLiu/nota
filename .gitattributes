@@ -1,0 +1,14 @@
+# Normalise line endings so Windows checkouts do not produce line-ending churn.
+* text=auto eol=lf
+
+# PowerShell scripts are tested on Windows PowerShell 5.1 with UTF-8 BOM + CRLF.
+# Keep CRLF on checkout so a fresh clone behaves exactly like the verified tree.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+*.png binary
+*.jpg binary
+*.wav binary
+*.mp3 binary
+*.bin binary
+*.onnx binary

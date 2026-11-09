@@ -29,7 +29,44 @@ python -m backend.main
 
 首次启动会自动建库、建表。**默认是 demo 模式**：用确定性本地规划器跑通「录音 → 转写 → Agent 工具调用 → 结果」整条链路，不联网、不花钱、可重复。
 
-想接真模型：`cp .env.example .env`，填 `OPENAI_API_KEY` / `OPENAI_MODEL`（或 Anthropic），把 `LLM_PROVIDER` 改成 `openai` / `anthropic`，重启即可。**同一套 harness、同一套工具、同一套 trace**，没有第二套代码路径。
+## 接真实模型
+
+```powershell
+Copy-Item .env.example .env
+# 编辑 .env：把 LLM_PROVIDER 改成 openai，填 OPENAI_BASE_URL / OPENAI_API_KEY / OPENAI_MODEL
+
+python -m scripts.check_llm    # ← 先自检，再启动
+.\run.ps1
+```
+
+`check_llm` 会在真正跑业务之前依次确认：配置是否完整 → 认证是否通过 → **模型是否真的会返回 tool_calls**。第三步是重点：一个网关能正常聊天、却不支持 function calling，是这类接入最常见也最隐蔽的坑，所以单独校验而不是假设。
+
+几家国内的填法（都是 OpenAI 兼容协议，只改这三个值）：
+
+| 服务 | `OPENAI_BASE_URL` | `OPENAI_MODEL` |
+|---|---|---|
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| 月之暗面 | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` |
+| 智谱 | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
+| 通义 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
+| OpenAI | 留空（默认官方） | `gpt-4o-mini` |
+
+`base_url` 末尾不要写 `/chat/completions`，客户端会自己拼。
+
+**`.env` 不会进 git**（`.gitignore` 已忽略），`.env.example` 里只有变量名没有值。`/healthz` 只暴露「key 有没有配置」这个布尔值，永远不返回 key 本身。
+
+回退到离线模式有两条路，都不用改文件：`.\run.ps1 -Demo`，或临时 `$env:LLM_PROVIDER="scripted"`（进程环境变量优先于 `.env`）。
+
+### 接不通怎么查
+
+| 现象 | 原因 | 处置 |
+|---|---|---|
+| `OPENAI_API_KEY 是空的` | Key 没填 | 填 `.env` 里那一行 |
+| `API key 被拒绝（401）` | Key 错/过期/带空格 | 重新复制，确认没把示例值粘进去 |
+| `路径或模型不存在（404）` | `base_url` 多了或少了 `/v1`，或模型名拼错 | 对照上表 |
+| `请求被拒绝（400）` + 提到 tool | 该模型不支持 function calling | 换模型，本项目依赖工具调用 |
+| 连不上 / 超时 | 网络或代理 | `LLM_TRUST_ENV=false` 试一次；内网需自建网关 |
+| 启动退出码 2 | 配置不完整 | 看上面的清单，一次改完 |
 
 ## 它到底做了什么
 

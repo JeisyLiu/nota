@@ -11,6 +11,13 @@ class HealthOut(BaseModel):
     provider: str
     stt: str
     db: str
+    # Surfaced so the UI can say "key missing" instead of "live", and so a
+    # reviewer can confirm which model path is actually running. Never includes
+    # the key itself.
+    model: str = ""
+    demo: bool = True
+    api_key_configured: bool = False
+    config_problems: list[str] = Field(default_factory=list)
 
 
 class QuotaOut(BaseModel):

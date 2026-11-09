@@ -38,7 +38,17 @@ def _user(request: Request, x_user: str | None = None) -> str:
 @router.get("/healthz", response_model=HealthOut)
 def healthz(request: Request):
     c = _container(request)
-    return HealthOut(ok=True, provider=c.model.name, stt=c.stt.name, db=str(c.settings.db_path))
+    s = c.settings
+    return HealthOut(
+        ok=True,
+        provider=c.model.name,
+        stt=c.stt.name,
+        db=str(s.db_path),
+        model=s.model_label,
+        demo=bool(s.demo_mode),
+        api_key_configured=bool(s.api_key_configured),
+        config_problems=list(s.llm_problems()),
+    )
 
 
 # --------------------------------------------------------------------------- quota

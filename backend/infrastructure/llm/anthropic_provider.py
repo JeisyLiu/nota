@@ -18,12 +18,14 @@ class AnthropicChatModel:
     name = "anthropic"
 
     def __init__(self, *, api_key: str, model: str, base_url: str = "https://api.anthropic.com",
-                 version: str = "2023-06-01", timeout: float = 60.0):
+                 version: str = "2023-06-01", timeout: float = 60.0,
+                 trust_env: bool = True):
         self.api_key = api_key
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.version = version
         self.timeout = timeout
+        self._client = httpx.Client(timeout=timeout, trust_env=trust_env)
 
     def complete(
         self,
@@ -45,21 +47,41 @@ class AnthropicChatModel:
         if tools:
             payload["tools"] = [t.to_anthropic() for t in tools]
 
+        url = f"{self.base_url}/v1/messages"
         try:
-            resp = httpx.post(
-                f"{self.base_url}/v1/messages",
+            resp = self._client.post(
+                url,
                 json=payload,
                 headers={
                     "x-api-key": self.api_key,
                     "anthropic-version": self.version,
                     "content-type": "application/json",
                 },
-                timeout=self.timeout,
             )
-            resp.raise_for_status()
-            data = resp.json()
+        except httpx.TimeoutException as exc:
+            raise ProviderError(
+                f"请求 {url} 超时（{self.timeout}s）。可把 LLM_TIMEOUT_SECONDS 调大。"
+            ) from exc
         except httpx.HTTPError as exc:
-            raise ProviderError(f"anthropic request failed: {exc}") from exc
+            raise ProviderError(
+                f"连不上 {url}：{exc}\n检查网络，或试 LLM_TRUST_ENV=false。"
+            ) from exc
+
+        if resp.status_code >= 400:
+            reason = {
+                401: "API key 被拒绝（401）。检查 ANTHROPIC_API_KEY 是否填对。",
+                403: "没有权限（403）。",
+                404: "路径或模型不存在（404）。检查 ANTHROPIC_MODEL。",
+                429: "被限流或余额不足（429）。",
+            }.get(resp.status_code, f"未预期的状态码 {resp.status_code}。")
+            raise ProviderError(f"{reason}\n原始响应：{resp.text[:400]}")
+
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise ProviderError(
+                f"{url} 返回的不是 JSON（HTTP {resp.status_code}）：{resp.text[:300]}"
+            ) from exc
 
         texts, calls = [], []
         for block in data.get("content") or []:

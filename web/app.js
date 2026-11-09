@@ -477,17 +477,24 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     bind();
-    // reflect the running mode in the header
+    // reflect the running mode in the header, and say which model is answering
     fetch("/healthz").then((r) => r.json()).then((h) => {
       const tag = $("mode-tag");
-      if (h.provider === "scripted") {
+      const parts = [];
+      if (h.stt === "faster_whisper") parts.push("本地转写");
+      if (h.demo) {
         tag.textContent = "demo · 无模型密钥";
-        tag.title = "未配置 LLM_PROVIDER，用确定性本地规划器跑通全链路";
-      } else {
-        tag.textContent = h.provider + " · 在线";
-        tag.classList.add("live");
-        tag.title = h.stt === "faster_whisper" ? "本地 faster-whisper 转写" : "STT 已关闭";
+        tag.title = "使用确定性本地规划器跑通全链路，没有调用任何模型。\n" +
+                    "要接真模型：在 .env 里设置 LLM_PROVIDER=openai 并填入 key，然后重启。";
+        return;
       }
+      tag.textContent = h.provider + " · " + (h.model || "在线");
+      tag.classList.add("live");
+      tag.title = [
+        "provider: " + h.provider,
+        "model: " + (h.model || "?"),
+        "key: " + (h.api_key_configured ? "已配置" : "缺失"),
+      ].concat(parts).join("\n");
     }).catch(() => {});
   });
 })();

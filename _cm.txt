@@ -1,0 +1,23 @@
+Move hold-to-talk to a bottom action bar
+
+The button sat in the middle of a scrolling list, which was wrong for the
+primary action on a phone: it scrolled away while reading older notes, and it
+was nowhere near where the thumb rests. The bottom bar is now a fixed area
+holding hold-to-talk plus the keyboard fallback, with the note list scrolling
+between it and the pinned quota bar.
+
+Details that came with the move:
+
+  - HoldToTalkButton takes a size (120 down from 160) and scales its icon and
+    label off it, since the bottom bar has limited height.
+  - A disabled state is now visually distinct: greyed border, icon and label
+    instead of a full-colour button that just ignores taps.
+  - Status ("Agent 正在处理…") and the quota-exhausted warning render inside the
+    bottom bar, so the user sees them right where the finger is, not a screen
+    away.
+  - SafeArea(bottom) wraps the bar for phones with a home indicator.
+  - The hint text shrank to fit one line; the long example moved out since the
+    button above it now says what the input is for.
+
+Windows release rebuilt and re-verified: analyze clean, 11 tests pass, window
+still 390x844, screenshot updated from the live build against the backend.

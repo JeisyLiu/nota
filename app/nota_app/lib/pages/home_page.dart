@@ -29,7 +29,6 @@ class _HomePageState extends State<HomePage> {
   String? _status;
   bool _recording = false;
   bool _busy = false;
-  String? _lastJobId;
 
   @override
   void initState() {
@@ -123,7 +122,6 @@ class _HomePageState extends State<HomePage> {
     try {
       final created = await submit();
       final jobId = created['job_id'] as String;
-      _lastJobId = jobId;
       setState(() => _status = 'Agent 正在处理…');
       final job = await widget.client.waitFor(jobId);
       if (!mounted) return;
@@ -195,99 +193,137 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _refresh,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-          children: [
-            if (quota != null) QuotaBar(used: quota.used, limit: quota.limit),
-            const SizedBox(height: 20),
-            Center(
-              child: HoldToTalkButton(
+      body: Column(
+        children: [
+          // Quota stays pinned at the top: it is read-only status, and keeping it
+          // outside the scroll view means it is visible while recording, when
+          // "am I about to run out" actually matters.
+          if (quota != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: QuotaBar(used: quota.used, limit: quota.limit),
+            ),
+          Expanded(child: _buildNoteList()),
+          _buildBottomBar(quota),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNoteList() {
+    return RefreshIndicator(
+      onRefresh: _refresh,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        children: [
+          const Text('最近',
+              style: TextStyle(fontSize: 13, color: Color(0xFF8B93A7), letterSpacing: 1)),
+          const SizedBox(height: 8),
+          if (_notes.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: Text('还没有记录，说一句话试试',
+                    style: TextStyle(color: Color(0xFF8B93A7))),
+              ),
+            )
+          else
+            ..._notes.map((note) => Card(
+                  child: ListTile(
+                    title: Text(
+                      note.title ?? note.transcript,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                    subtitle: Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Row(
+                        children: [
+                          if (note.state != null) StateBadge(state: note.state!),
+                          const SizedBox(width: 8),
+                          Text(
+                            note.createdAt.replaceFirst('T', ' ').split('+').first,
+                            style: const TextStyle(fontSize: 11, color: Color(0xFF8B93A7)),
+                          ),
+                        ],
+                      ),
+                    ),
+                    trailing: const Icon(Icons.chevron_right, size: 18),
+                    onTap: () => _openNote(note),
+                  ),
+                )),
+        ],
+      ),
+    );
+  }
+
+  /// Bottom action area: hold-to-talk plus the keyboard alternative.
+  ///
+  /// Both live here rather than in the scrolling list because this is a
+  /// thumb-reach problem, not a layout preference — the primary action has to be
+  /// where the thumb already rests, and it must not scroll away while the user
+  /// is reading older notes. The gradient + top hairline separate it from the
+  /// list so the button reads as anchored rather than floating.
+  Widget _buildBottomBar(Quota? quota) {
+    final exhausted = quota != null && quota.exhausted;
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF101318),
+        border: Border(top: BorderSide(color: Color(0xFF22262F))),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_status != null) ...[
+                Text(_status!,
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF8B93A7))),
+                const SizedBox(height: 8),
+              ],
+              if (exhausted) ...[
+                const Text('今日免费额度已用完，本地时间零点重置',
+                    style: TextStyle(fontSize: 12, color: Color(0xFFFBBF24))),
+                const SizedBox(height: 8),
+              ],
+              HoldToTalkButton(
                 recording: _recording,
-                enabled: !_busy && (quota == null || !quota.exhausted),
+                enabled: !_busy && !exhausted,
                 onStart: _startRecording,
                 onStop: _stopRecording,
               ),
-            ),
-            if (_status != null) ...[
               const SizedBox(height: 12),
-              Center(
-                child: Text(_status!,
-                    style: const TextStyle(fontSize: 12, color: Color(0xFF8B93A7))),
-              ),
-            ],
-            if (quota != null && quota.exhausted) ...[
-              const SizedBox(height: 12),
-              const Center(
-                child: Text('今日免费额度已用完，本地时间零点重置',
-                    style: TextStyle(fontSize: 12, color: Color(0xFFFBBF24))),
-              ),
-            ],
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _textController,
-                    enabled: !_busy,
-                    maxLines: 2,
-                    minLines: 1,
-                    decoration: const InputDecoration(
-                      hintText: '也可以直接打字：明天下午三点提醒我给张总发报价单',
-                      isDense: true,
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _textController,
+                      enabled: !_busy,
+                      maxLines: 2,
+                      minLines: 1,
+                      style: const TextStyle(fontSize: 13),
+                      decoration: const InputDecoration(
+                        hintText: '也可以直接打字…',
+                        hintStyle: TextStyle(fontSize: 13),
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      ),
+                      onSubmitted: (_) => _sendText(),
                     ),
-                    onSubmitted: (_) => _sendText(),
                   ),
-                ),
-                const SizedBox(width: 8),
-                IconButton.filled(
-                  onPressed: _busy ? null : _sendText,
-                  icon: const Icon(Icons.arrow_upward),
-                  tooltip: '发送',
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-            const Text('最近',
-                style: TextStyle(fontSize: 13, color: Color(0xFF8B93A7), letterSpacing: 1)),
-            const SizedBox(height: 8),
-            if (_notes.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(
-                  child: Text('还没有记录，说一句话试试',
-                      style: TextStyle(color: Color(0xFF8B93A7))),
-                ),
-              )
-            else
-              ..._notes.map((note) => Card(
-                    child: ListTile(
-                      title: Text(
-                        note.title ?? note.transcript,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 14),
-                      ),
-                      subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Row(
-                          children: [
-                            if (note.state != null) StateBadge(state: note.state!),
-                            const SizedBox(width: 8),
-                            Text(
-                              note.createdAt.replaceFirst('T', ' ').split('+').first,
-                              style: const TextStyle(fontSize: 11, color: Color(0xFF8B93A7)),
-                            ),
-                          ],
-                        ),
-                      ),
-                      trailing: const Icon(Icons.chevron_right, size: 18),
-                      onTap: () => _openNote(note),
-                    ),
-                  )),
-            if (_lastJobId != null) const SizedBox(height: 8),
-          ],
+                  const SizedBox(width: 8),
+                  IconButton.filled(
+                    onPressed: _busy ? null : _sendText,
+                    icon: const Icon(Icons.arrow_upward, size: 20),
+                    tooltip: '发送',
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

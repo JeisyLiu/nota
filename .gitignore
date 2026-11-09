@@ -56,3 +56,7 @@ app/nota_app/android/.cxx/
 /models/
 .whisper/
 *.bin
+
+# Eval reports written by `--json` are scratch output, not fixtures. The real
+# fixture is eval/dataset.json, which must stay tracked.
+eval/_*.json

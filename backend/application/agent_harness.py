@@ -30,7 +30,7 @@ class AgentHarness:
         run_id: str,
         plan: str = "free",
         tz: str = "Asia/Shanghai",
-        prompt_version: str = "v2",
+        prompt_version: str = "v3",
     ) -> AgentOutcome:
         from datetime import datetime
 

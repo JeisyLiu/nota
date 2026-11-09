@@ -1,0 +1,42 @@
+v3 prompt: measure against a real model, then fix what it reveals
+
+Running the eval suite against deepseek-chat instead of the scripted planner was
+the point of this change, and it immediately showed the suite had been grading
+itself: v2 scored 1.000 on scripted and 0.778 on a real model.
+
+Two systematic failures, both from the prompt, not the harness:
+  - "remind me to X" created a reminder and no todo. The rule existed but gave
+    no reason, so the model treated the reminder as sufficient. It is not: a
+    reminder fires once and disappears, the todo is what stays in the list.
+  - plain scheduled actions ("reconcile with the supplier") created nothing,
+    because the model read an arrangement as a statement.
+
+v3 states the criterion as a question, attaches the reason, and adds worked
+examples -- small models follow examples where they ignore prose.
+
+Two more findings were bugs in the evaluation, not the model:
+  - n03 expected one todo for "buy milk and eggs, and pick up the parcel". Two
+    things were asked for, so two todos are right; the label was incomplete.
+  - n06 expected a reminder and no todo, contradicting the rule every other
+    reminder case follows. Aligned to the rule rather than keeping a special
+    case.
+Both are label changes justified against the spec; each carries a comment
+saying so, because changing labels until a model passes is overfitting.
+
+Also fixed, all found by measurement:
+  - weekday arithmetic: deepseek resolved xia zhou er to tomorrow. Models are
+    bad at calendars, so the prompt now carries this week and next week as
+    concrete dates and the model only has to pick one.
+  - citation slips: the model emitted [note:187206ead94e], dropping the note_
+    prefix. Repaired only when the bare id matches exactly one retrieved note,
+    and the repairs are returned in the response so it stays auditable.
+  - the eval scored todo due_at but never printed it, so a wrong time showed up
+    as a bare 10/11 with 15/15 cases green. Times now appear in the report and
+    a wrong time fails the case.
+  - q05 demanded a citation for a question whose snippet genuinely lacks the
+    answer, which rewards inventing one. An honest "not recorded" now passes.
+  - scripted's action-word list lacked chi/he, so "remind me to take my
+    medicine" produced no todo.
+
+scripted still scores 1.000, so the offline baseline is unchanged; the eval gate
+in tests/test_memory.py stays meaningful for both providers.

@@ -41,6 +41,9 @@
         "todos": [
           {
             "title_contains": "牛奶"
+          },
+          {
+            "title_contains": "快递"
           }
         ],
         "reminders": []
@@ -81,6 +84,11 @@
           {
             "title_contains": "吃药",
             "fire_at": "2026-11-09T19:00"
+          }
+        ],
+        "todos": [
+          {
+            "title_contains": "吃药"
           }
         ]
       }

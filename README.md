@@ -93,17 +93,24 @@ python -m scripts.check_llm    # ← 先自检，再启动
 
 ```powershell
 .\scripts\verify.ps1     # 起服务 + 打 8 组端到端断言，全绿才算过
-python -m pytest tests   # 39 项
+python -m pytest tests   # 53 项
 python -m eval.run_eval  # 15 条标注语料 + 5 条历史问答
 ```
 
-当前结果：
+当前结果，两个 provider 都跑过：
+
+| provider | task F1 | 时间解析 | 耗时 |
+|---|---|---|---|
+| `scripted`（离线） | 1.000 | 11/11 | 0.8s |
+| `openai` / deepseek-chat | 1.000 | 11/11 | 34s |
 
 ```
 task extraction   F1=1.000  P=1.000  R=1.000  (15/15 cases clean)
 time resolution   11/11 = 1.000
-groundedness      citations ok=4, refusals ok=1, hallucinated=0
+groundedness      citations ok=3, refusals ok=2, hallucinated=0
 ```
+
+**这两行数字的意义不一样。** `scripted` 满分是自证——它按规则表输出，本来就该对。真正有信息量的是真模型那一行：v2 prompt 在 deepseek-chat 上只有 **F1=0.778**，8 条用例失败，两类系统性错误（「提醒我 X」只建提醒不建待办；「跟供应商对账」这类安排完全不建）。v3 把这些写进 prompt 后到 1.000。这个从 0.778 到 1.000 的过程记录在 `docs/decisions.md` 的 ADR-012，包括哪两处是**改评估集标签**（标签错了）而不是改模型。
 
 评估集不是一次性脚本，`tests/test_memory.py::test_eval_suite_is_green` 会在每次 `pytest` 时重跑它——改了 prompt 或检索逻辑导致编造待办/引错记录，测试会红。
 

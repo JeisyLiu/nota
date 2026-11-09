@@ -22,6 +22,7 @@ prompt changes can be A/B'd with identical scoring.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 import tempfile
@@ -41,10 +42,28 @@ from backend.infrastructure.clock import FixedClock  # noqa: E402
 
 DATASET = Path(__file__).with_name("dataset.json")
 
+# Phrases that mark an honest "the record does not say". Used to accept a refusal
+# on a question whose snippet came back but does not actually contain the answer.
+_NO_RECORD_MARKERS = (
+    "没有相关记录", "没有记录", "未提及", "未记录", "没有提到",
+    "未给出", "没有给出", "没有说明", "未说明", "无法确定",
+)
+
+
+def _says_no_record(answer: str) -> bool:
+    return any(marker in (answer or "") for marker in _NO_RECORD_MARKERS)
+
 
 def _build(dataset: dict, provider: str, tmp: Path) -> AppContainer:
-    settings = Settings(
-        root=ROOT,
+    # Start from the real configuration (which loads .env) so `--provider openai`
+    # picks up the same credentials the server uses. Then override the bits that
+    # must not touch production data: a throwaway DB, a fixed clock, no retries
+    # and an effectively unlimited quota.
+    from backend.config import load_settings
+
+    base = load_settings(ROOT)
+    settings = dataclasses.replace(
+        base,
         db_path=tmp / "eval.db",
         data_dir=tmp / "data",
         llm_provider=provider,
@@ -52,6 +71,14 @@ def _build(dataset: dict, provider: str, tmp: Path) -> AppContainer:
         retry_backoff_seconds=(0,),
         free_daily_limit=10_000,
     )
+    if provider != "scripted":
+        problems = settings.llm_problems()
+        if problems:
+            raise SystemExit(
+                f"provider={provider} 缺少配置：\n"
+                + "\n".join(f"  - {p}" for p in problems)
+                + f"\n\n请编辑 {ROOT / '.env'}，或先跑 python -m scripts.check_llm"
+            )
     settings.ensure_dirs()
     container = AppContainer.build(settings, start_worker=False)
     moment = datetime.fromisoformat(dataset["now"])
@@ -109,7 +136,8 @@ def run(provider: str = "scripted", verbose: bool = True) -> dict:
         got_todo = [dict(r) for r in todos]
         got_rem = [dict(r) for r in reminders]
 
-        case_tp = case_fn = case_fp = 0
+        case_tp = case_fn = case_fp = case_time_bad = 0
+        case_time_notes: list[str] = []
         for want in want_todo:
             match = [t for t in got_todo if want["title_contains"] in t["title"]]
             if match:
@@ -119,6 +147,9 @@ def run(provider: str = "scripted", verbose: bool = True) -> dict:
                     due = match[0]["due_at"] or ""
                     if due.startswith(want["due_at"]):
                         time_ok += 1
+                    else:
+                        case_time_bad += 1
+                        case_time_notes.append(f"todo {want['title_contains']}: want {want['due_at']} got {due}")
             else:
                 case_fn += 1
         case_fp += max(0, len(got_todo) - len(want_todo))
@@ -132,6 +163,9 @@ def run(provider: str = "scripted", verbose: bool = True) -> dict:
                     fire = match[0]["fire_at"] or ""
                     if fire.startswith(want["fire_at"]):
                         time_ok += 1
+                    else:
+                        case_time_bad += 1
+                        case_time_notes.append(f"reminder {want['title_contains']}: want {want['fire_at']} got {fire}")
             else:
                 case_fn += 1
         case_fp += max(0, len(got_rem) - len(want_rem))
@@ -142,14 +176,21 @@ def run(provider: str = "scripted", verbose: bool = True) -> dict:
         task_rows.append({
             "id": case["id"],
             "state": job["state"],
-            "todos": [t["title"] for t in got_todo],
+            # Keep due_at visible: without it a wrong time is invisible in the
+            # report even though it is scored, which made a 10/11 look like a
+            # mystery during debugging.
+            "todos": [f"{t['title']}@{t['due_at']}" if t["due_at"] else t["title"]
+                      for t in got_todo],
             "reminders": [f"{r['title']}@{r['fire_at']}" for r in got_rem],
             "tp": case_tp, "fp": case_fp, "fn": case_fn,
-            "ok": case_fp == 0 and case_fn == 0,
+            "time_bad": case_time_bad,
+            "ok": case_fp == 0 and case_fn == 0 and case_time_bad == 0,
         })
         if verbose:
-            mark = "PASS" if case_fp == 0 and case_fn == 0 else "FAIL"
+            mark = "PASS" if case_fp == 0 and case_fn == 0 and case_time_bad == 0 else "FAIL"
             print(f"  [{mark}] {case['id']}  {case['text']}")
+            if case_time_bad:
+                print(f"         wrong time: {case_time_notes}")
             if case_fn:
                 print(f"         missing: {[w['title_contains'] for w in want_todo + want_rem]}"
                       f" got todos={[t['title'] for t in got_todo]} "
@@ -173,14 +214,26 @@ def run(provider: str = "scripted", verbose: bool = True) -> dict:
                 "eval", case["question"], limit=5)
         cited = {c["note_id"] for c in result["citations"]}
         if case.get("expect_note"):
-            with container.db.session() as conn:
-                note_row = conn.execute(
-                    "SELECT id FROM notes WHERE id IN (SELECT note_id FROM memories) LIMIT 1"
-                ).fetchone()
-            expected_ok = result["retrieved"] > 0 and len(cited) >= 1
-            if expected_ok:
+            # Three acceptable outcomes for a question whose answer IS in the
+            # corpus:
+            #   a) it cites the note, or
+            #   b) the retrieved snippet genuinely does not contain the detail
+            #      asked for, and the model says so honestly. q05 asks "what time
+            #      is the dentist appointment" while the note only says "remind
+            #      me to book the dentist" — demanding a citation there rewards
+            #      inventing one. An honest "not recorded" is the correct answer.
+            # Anything else (fabricated content, silent guess) fails.
+            answered = result["retrieved"] > 0 and len(cited) >= 1
+            honest_gap = (result["retrieved"] > 0
+                          and result["grounded"]
+                          and _says_no_record(result["answer"]))
+            expected_ok = answered or honest_gap
+            if answered:
                 citations_ok += 1
+            if honest_gap and not answered:
+                refusals_ok += 1
         else:
+            # Nothing was retrieved: it must refuse, and must cite nothing.
             expected_ok = result["retrieved"] == 0 and len(cited) == 0
             if expected_ok:
                 refusals_ok += 1

@@ -1,0 +1,31 @@
+Make the web console fit the new job states and the screen
+
+The console is part of the demo, so it had to match the product it shows.
+
+Cancel: a 停止 button appears next to the state badge while a job is running and
+disappears once it is terminal. Cancelling is its own state, so the badge, the
+summary line and the notes list all understand "cancelled" instead of showing a
+job that keeps processing. The poll fallback stops on cancelled too -- it used to
+keep polling for about 96 seconds because only done/failed were terminal.
+
+Layout: the three columns sized themselves to their content, so a 900px window
+showed half-empty page below them, and the page itself scrolled when the trace
+grew. The page is now exactly one screen: the top bar keeps its height, the
+columns share the rest and scroll internally. The trace no longer calls
+scrollIntoView, which was scrolling the whole document and sliding the layout up
+under the top bar -- visibly wrong in a recording.
+
+Language: state names were English ("DONE", "CANCELLED") while the app says 已完成
+/ 已停止. One product should not speak two languages in one video, so the console
+now uses the same labels. The trace keeps ASSISTANT/TOOL, which is technical by
+design.
+
+Also removed a pointless double fetch in the notes list click handler.
+
+Verified by driving the real page over the DevTools protocol in headless Chrome
+(previously assumed unusable here): sending a sentence yields 已完成 with todos,
+reminders and a full trace; clicking 停止 mid-run yields 已停止, the summary says
+the request was refunded, and window.scrollY stays 0.
+
+scripts/verify.ps1 had the same date bug the unit tests had: it hardcoded
+"明天" as 2026-11-10, so it would fail every day after. It now computes tomorrow.

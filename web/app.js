@@ -92,14 +92,13 @@
       }
       for (const n of notes) {
         const li = el("li");
-        const tag = el("span", "n-state" + (n.state === "failed" ? " failed" : ""), n.state || "?");
+        const cls = n.state === "failed" ? " failed"
+          : n.state === "cancelled" ? " cancelled" : "";
+        const tag = el("span", "n-state" + cls, stateLabel(n.state || "?"));
         li.appendChild(tag);
         li.appendChild(document.createTextNode(n.title || n.transcript || n.note_id));
-        li.addEventListener("click", async () => {
-          const jobs = await api("/api/notes?limit=20");
-          const match = jobs.find((x) => x.note_id === n.note_id);
-          if (match) await loadJobForNote(n.note_id);
-        });
+        // The list already carries the note id; no need to re-fetch the list.
+        li.addEventListener("click", () => loadJobForNote(n.note_id));
         list.appendChild(li);
       }
     } catch (e) {
@@ -231,12 +230,54 @@
     streamJob(created.job_id);
   }
 
+  const TERMINAL = ["done", "failed", "cancelled"];
+
+  // Same vocabulary as the app, so the product does not speak two languages in
+  // one recording. The trace keeps TECHNICAL names (ASSISTANT/TOOL) on purpose.
+  const STATE_LABELS = {
+    queued: "排队中",
+    transcribing: "转写中",
+    agent_running: "整理中",
+    done: "已完成",
+    failed: "失败",
+    cancelled: "已停止",
+  };
+  const stateLabel = (name) => STATE_LABELS[name] || name;
+
   function setJobState(name) {
     const badge = $("job-state");
-    badge.textContent = name;
-    badge.className = "state " + (
-      name === "done" ? "done" : name === "failed" ? "failed" : ""
-    );
+    badge.textContent = stateLabel(name);
+    const cls = name === "done" ? "done"
+      : name === "failed" ? "failed"
+      : name === "cancelled" ? "cancelled"
+      : "";
+    badge.className = "state " + cls;
+    // Stop only makes sense while something is still running.
+    const stop = $("btn-stop");
+    if (stop) stop.classList.toggle("hidden", TERMINAL.indexOf(name) !== -1);
+  }
+
+  async function stopJob() {
+    if (!state.jobId) return;
+    const btn = $("btn-stop");
+    btn.disabled = true;
+    try {
+      const res = await api(`/api/jobs/${encodeURIComponent(state.jobId)}/cancel`, {
+        method: "POST",
+      });
+      if (state.source && state.source.close) {
+        state.source.close();
+        state.source = null;
+      }
+      renderJob(res.job);
+      toast(res.cancelled ? "已停止，本次额度已退回" : "任务已结束");
+      refreshQuota();
+      refreshNotes();
+    } catch (e) {
+      toast(e.message || "停止失败", true);
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   function streamJob(jobId) {
@@ -277,7 +318,7 @@
       try {
         const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
         setJobState(job.state);
-        if (job.state === "done" || job.state === "failed") {
+        if (TERMINAL.indexOf(job.state) !== -1) {
           renderJob(job);
           await loadSteps(jobId);
           refreshQuota();
@@ -312,7 +353,10 @@
       li.appendChild(pre);
     }
     $("steps").appendChild(li);
-    li.scrollIntoView({ block: "nearest" });
+    // Scroll the trace list, not the page: scrollIntoView also scrolled the
+    // document, which slid the whole layout up under the top bar.
+    const list = $("steps");
+    list.scrollTop = list.scrollHeight;
   }
 
   function renderJob(job) {
@@ -324,7 +368,9 @@
     $("summary-title").textContent = job.title || "";
     $("summary-body").textContent = job.summary || (job.state === "failed"
       ? `处理失败：${job.error || "未知错误"}（本次额度已退回）`
-      : "正在处理…");
+      : job.state === "cancelled"
+        ? "已停止，本次额度已退回。没有生成待办或提醒。"
+        : "正在处理…");
 
     const todos = $("todos");
     todos.innerHTML = "";
@@ -454,6 +500,7 @@
       if (state.recording) stopRecording(); else startRecording();
     });
     $("btn-send").addEventListener("click", sendText);
+    $("btn-stop").addEventListener("click", stopJob);
     $("text-input").addEventListener("keydown", (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") sendText();
     });

@@ -24,6 +24,17 @@ html, body {
   line-height: 1.55;
 }
 
+/* The console is a single screen: the top bar keeps its height and the three
+   columns share whatever is left, scrolling inside themselves. Without this the
+   page itself grew with the trace and the whole layout drifted under the top
+   bar -- very visible in a recording. */
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -79,11 +90,16 @@ html, body {
   grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.2fr) minmax(320px, 1fr);
   gap: 16px;
   padding: 16px;
-  align-items: start;
+  align-items: stretch;
+  /* Fills the space under the top bar instead of collapsing to its content. */
+  flex: 1 1 auto;
+  min-height: 0;
+  box-sizing: border-box;
 }
 
 @media (max-width: 1100px) {
-  .layout { grid-template-columns: 1fr; }
+  .layout { grid-template-columns: 1fr; min-height: 0; }
+  body { height: auto; overflow: auto; }
 }
 
 .col {
@@ -91,7 +107,11 @@ html, body {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 16px;
-  min-height: 240px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* Long notes / traces scroll inside the card, never the page. */
+  overflow: auto;
 }
 
 .col h2 {
@@ -197,6 +217,7 @@ button.ghost:hover { color: var(--text); border-color: var(--accent-2); }
   color: var(--accent-2);
 }
 .notes li .n-state.failed { color: var(--danger); }
+.notes li .n-state.cancelled { color: var(--warn, #fbbf24); }
 
 .empty { color: var(--muted); font-size: 13px; padding: 24px 0; text-align: center; }
 .hidden { display: none !important; }
@@ -209,7 +230,20 @@ button.ghost:hover { color: var(--text); border-color: var(--accent-2); }
 }
 .state.done { background: #13302a; color: var(--accent); }
 .state.failed { background: #3a1f22; color: var(--danger); }
+.state.cancelled { background: #2a2416; color: var(--warn, #fbbf24); }
 .job-id { font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; }
+
+/* Stop is only meaningful while work is in flight, so it lives next to the state
+   badge and disappears the moment the job reaches a terminal state. */
+.stop {
+  margin-left: auto;
+  font-size: 12px; padding: 4px 12px;
+  background: transparent; color: var(--warn, #fbbf24);
+  border: 1px solid rgba(251, 191, 36, .45); border-radius: 999px;
+  cursor: pointer;
+}
+.stop:hover { background: rgba(251, 191, 36, .12); }
+.stop:disabled { opacity: .5; cursor: default; }
 
 .summary-title { font-size: 16px; margin: 4px 0 8px; }
 .summary-body {
@@ -253,6 +287,11 @@ button.ghost:hover { color: var(--text); border-color: var(--accent-2); }
 
 .trace-meta { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
 .steps { list-style: none; margin: 0; padding: 0; }
+
+/* The trace column keeps its header fixed and scrolls the list itself, so a
+   growing trace never moves the page. */
+.col.trace { overflow: hidden; }
+.col.trace .steps { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .steps li {
   position: relative;
   padding: 8px 0 12px 22px;

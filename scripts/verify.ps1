@@ -107,9 +107,12 @@ try {
     Check "has todo" (@($job.todos).Count -ge 1) (@($job.todos).Count)
     Check "has reminder" (@($job.reminders).Count -ge 1) (@($job.reminders).Count)
     $due = if (@($job.todos).Count -ge 1) { $job.todos[0].due_at } else { "" }
-    Check "todo due 2026-11-10T15:00" ($due -like "2026-11-10T15:00*") $due
+    # "明天下午三点" is relative, so the expected date has to be computed. Hardcoding
+    # it made this check pass one day and fail the next.
+    $tomorrow = (Get-Date).AddDays(1).ToString("yyyy-MM-dd")
+    Check "todo due $tomorrow`T15:00" ($due -like "$tomorrow`T15:00*") $due
     $fire = if (@($job.reminders).Count -ge 1) { $job.reminders[0].fire_at } else { "" }
-    Check "reminder fires 2026-11-10T15:00" ($fire -like "2026-11-10T15:00*") $fire
+    Check "reminder fires $tomorrow`T15:00" ($fire -like "$tomorrow`T15:00*") $fire
 
     $steps = Get-Api ("/api/jobs/" + $created.job_id + "/steps")
     Check "trace has assistant step" (@($steps | Where-Object { $_.type -eq "assistant" }).Count -ge 1) ""

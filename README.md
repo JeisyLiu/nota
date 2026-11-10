@@ -188,7 +188,7 @@ docs/              架构、ADR、硬件、数据库
 
 ## Flutter 客户端
 
-`app/nota_app/` 是同一套后端之上的移动端：按住说话、看摘要/待办/提醒、看 Agent 每一步工具调用、就地审批不可逆操作。
+`app/nota_app/` 是同一套后端之上的移动端：**登录/注册 → 按住说话 → 看摘要/待办/提醒 → 看 Agent 每一步工具调用 → 就地审批**，顶栏头像进个人信息页，可以在那里改密码或退出登录。
 
 ```powershell
 cd app\nota_app
@@ -196,11 +196,17 @@ flutter run -d chrome --dart-define=NOTA_BASE=http://127.0.0.1:8787   # 最快�
 flutter run --dart-define=NOTA_BASE=http://10.0.2.2:8787              # Android 模拟器
 ```
 
-本机实测：`flutter analyze` 0 issue，`flutter test` 11 项通过，`flutter build apk --debug` 与 `flutter build web --release` 均产出成功。**但没有在真机/模拟器上跑过**（本机无可用镜像），所以「能编译」不等于「我已在设备上点过每个按钮」。
+登录用后台同一套账号：`zhangwei / 123456`（也可用 `lina`、`wangfang`、`liuyang`、`chenjing`，密码都是 `123456`），或在 App 里直接注册新账号（固定为 Free 套餐）。App 用 `Authorization: Bearer <token>` 而不是 Cookie，因为 `package:http` 不会跨启动保留 Cookie；令牌存在 `shared_preferences`（明文，演示可接受，README 如实写出）。
+
+本机实测：`flutter analyze` 0 issue，`flutter test` 25 项通过，`flutter build apk --debug`、`flutter build web --release`、`flutter build windows --release` 均产出成功。**但没有在真机/模拟器上跑过**（本机无可用镜像），所以「能编译」不等于「我已在设备上点过每个按钮」——Windows 桌面版是用真实鼠标事件点过的。
+
+![App 登录页](docs/img/app-login.png)
+
+![App 个人信息页](docs/img/app-profile.png)
 
 ## 已知边界
 
-- **没有登录**。用户由 `X-User-Id` 头决定，默认 `demo`。这是 MVP 的取舍，不是疏忽——见 `docs/decisions.md` ADR-001。
+- **App 需要登录，脚本仍可用 `X-User-Id`**。后台接口（`/api/admin/*`）只认会话，请求头冒充不了管理员；客户接口保留请求头是为了脚本与 `verify.ps1` 不受影响，见 `docs/decisions.md` ADR-013。
 - **App 未做设备态验证**。构建与静态检查通过，交互只在代码与测试层面验证。
 - **STT 需要可选依赖**。`pip install faster-whisper` 才能用语音输入；不装就打字，产品仍然完整。
 - **SQLite 单机**。多实例部署需要换成 Postgres + 行级锁，账本逻辑可以照搬（`docs/decisions.md` ADR-004）。

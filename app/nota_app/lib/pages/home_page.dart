@@ -13,12 +13,21 @@ import '../models/models.dart';
 import '../widgets/hold_to_talk.dart';
 import '../widgets/quota_bar.dart';
 import '../widgets/state_badge.dart';
+import '../auth/session.dart';
 import 'detail_page.dart';
+import 'profile_page.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.client});
+  const HomePage({
+    super.key,
+    required this.client,
+    required this.user,
+    required this.onLogout,
+  });
 
   final NotaClient client;
+  final AppUser user;
+  final Future<void> Function() onLogout;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -59,7 +68,7 @@ class _HomePageState extends State<HomePage> {
     _stopLivePreview();
     _recorder.dispose();
     _textController.dispose();
-    widget.client.dispose();
+    // The client belongs to AppGate: closing it here would break the next login.
     super.dispose();
   }
 
@@ -352,6 +361,23 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _openProfile() async {
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => ProfilePage(
+        client: widget.client,
+        user: widget.user,
+        onLogout: () async {
+          // Close the profile page first, otherwise it would be sitting on top of
+          // the login screen after the gate swaps the whole tree.
+          if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+          await widget.onLogout();
+        },
+      ),
+    ));
+    if (!mounted) return;
+    await _refresh();
+  }
+
   Future<void> _openNote(NoteSummary note) async {
     try {
       final job = await widget.client.jobForNote(note.noteId);
@@ -384,8 +410,15 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(width: 10),
             const Text('Nota', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
             const SizedBox(width: 10),
-            const Text('随口说，剩下的我来',
-                style: TextStyle(fontSize: 11, color: Color(0xFF8B93A7))),
+            // Who is signed in, where the tagline used to be: after adding
+            // accounts, "which account am I?" is the more useful label.
+            Flexible(
+              child: Text(
+                widget.user.displayName,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 11, color: Color(0xFF8B93A7)),
+              ),
+            ),
           ],
         ),
         actions: [
@@ -393,6 +426,26 @@ class _HomePageState extends State<HomePage> {
             onPressed: _busy ? null : _refresh,
             icon: const Icon(Icons.refresh),
             tooltip: '刷新',
+          ),
+          // Tapping the avatar opens the personal centre; the name is already in
+          // the title, so this only needs to show who is signed in.
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Tooltip(
+              message: '${widget.user.displayName} · 个人信息',
+              child: InkWell(
+                borderRadius: BorderRadius.circular(99),
+                onTap: _openProfile,
+                child: CircleAvatar(
+                  radius: 15,
+                  backgroundColor: const Color(0xFF1D212A),
+                  child: Text(
+                    widget.user.initial,
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF6EE7B7)),
+                  ),
+                ),
+              ),
+            ),
           ),
         ],
       ),

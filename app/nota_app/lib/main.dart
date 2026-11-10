@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'api/nota_client.dart';
-import 'pages/home_page.dart';
+import 'app_gate.dart';
 
 /// 后端地址在构建时注入，默认指向本机：
 ///   flutter run --dart-define=NOTA_BASE=http://10.0.2.2:8787   # Android 模拟器
@@ -50,7 +49,7 @@ class NotaApp extends StatelessWidget {
           ),
         ),
       ),
-      home: HomePage(client: NotaClient(baseUrl: _base)),
+      home: AppGate(baseUrl: _base),
     );
   }
 }

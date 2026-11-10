@@ -135,3 +135,11 @@ class AdminTodoIn(BaseModel):
 class AdminReminderIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     fire_at: str = Field(min_length=1, max_length=40)
+
+
+class RegisterIn(BaseModel):
+    """Self-service sign-up. Deliberately has no role/plan field."""
+
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=6, max_length=200)
+    display_name: str | None = Field(default=None, max_length=64)

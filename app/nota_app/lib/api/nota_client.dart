@@ -1,6 +1,7 @@
 /// 后端 HTTP 客户端 —— 唯一与协议耦合的地方。
 ///
-/// 所有请求带 `X-User-Id`；MVP 没有登录，用户由这个头决定。
+/// 身份有两种走法：登录后发 `Authorization: Bearer <token>`（App 用这个），
+/// 没有 token 时退回 `X-User-Id`（脚本与 verify.ps1 仍在用）。
 /// 429 会被翻译成 [QuotaExceeded]，让 UI 能显示"今日额度已用完"而不是通用错误。
 ///
 /// 这里刻意不 import `dart:io`：音频以字节形式传入，读文件的事交给调用方
@@ -13,6 +14,7 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+import '../auth/session.dart';
 import '../models/models.dart';
 
 class NotaApiError implements Exception {
@@ -24,6 +26,13 @@ class NotaApiError implements Exception {
   String toString() => message;
 }
 
+/// 登录/注册的返回值：账号信息 + 令牌。
+class AuthResult {
+  const AuthResult(this.user, this.token);
+  final AppUser user;
+  final String token;
+}
+
 class NotaClient {
   NotaClient({required this.baseUrl, this.userId = 'demo', http.Client? client})
       : _client = client ?? http.Client();
@@ -32,11 +41,26 @@ class NotaClient {
   final String userId;
   final http.Client _client;
 
-  Map<String, String> get _headers => {'X-User-Id': userId};
+  /// 登录后由 AppGate 设置；为空表示还没登录，退回 `X-User-Id`。
+  String? authToken;
+
+  /// 401 时回调，让界面统一退回登录页。登录/注册自身的 401 不触发。
+  void Function()? onUnauthorized;
+
+  Map<String, String> get _headers {
+    final token = authToken;
+    if (token != null && token.isNotEmpty) {
+      return {'Authorization': 'Bearer $token'};
+    }
+    return {'X-User-Id': userId};
+  }
 
   Uri _uri(String path) => Uri.parse('$baseUrl$path');
 
-  Never _fail(http.Response res) {
+  Never _fail(http.Response res, {bool isAuthCall = false}) {
+    if (res.statusCode == 401 && !isAuthCall) {
+      onUnauthorized?.call();
+    }
     String message = 'HTTP ${res.statusCode}';
     Map<String, dynamic>? detail;
     try {
@@ -62,13 +86,20 @@ class NotaClient {
     return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> _postJson(String path, Map<String, dynamic> body) async {
+  Future<Map<String, dynamic>> _postJson(
+    String path,
+    Map<String, dynamic> body, {
+    bool isAuthCall = false,
+  }) async {
     final res = await _client.post(
       _uri(path),
       headers: {..._headers, 'Content-Type': 'application/json'},
       body: jsonEncode(body),
     );
-    if (res.statusCode != 200) _fail(res);
+    // 注册成功返回 201。
+    if (res.statusCode != 200 && res.statusCode != 201) {
+      _fail(res, isAuthCall: isAuthCall);
+    }
     return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
   }
 
@@ -179,6 +210,61 @@ class NotaClient {
   Future<AskResult> ask(String question) async =>
       AskResult.fromJson(await _postJson('/api/ask', {'question': question}));
 
+  // ------------------------------------------------------------------ 认证
+  Future<AuthResult> login(String username, String password) async {
+    final body = await _postJson(
+      '/api/auth/login',
+      {'username': username, 'password': password},
+      isAuthCall: true,
+    );
+    return AuthResult(
+      AppUser.fromJson(body['user'] as Map<String, dynamic>),
+      body['token'] as String,
+    );
+  }
+
+  Future<AuthResult> register({
+    required String username,
+    required String password,
+    String? displayName,
+  }) async {
+    final body = await _postJson(
+      '/api/auth/register',
+      {
+        'username': username,
+        'password': password,
+        if (displayName != null && displayName.trim().isNotEmpty)
+          'display_name': displayName.trim(),
+      },
+      isAuthCall: true,
+    );
+    return AuthResult(
+      AppUser.fromJson(body['user'] as Map<String, dynamic>),
+      body['token'] as String,
+    );
+  }
+
+  /// Best-effort: the local session is cleared regardless of the outcome.
+  Future<void> logout() async {
+    try {
+      await _postJson('/api/auth/logout', const {});
+    } catch (_) {
+      // Token already invalid or server unreachable; nothing to recover.
+    }
+  }
+
+  Future<AppUser> account() async =>
+      AppUser.fromJson((await _getJson('/api/auth/me'))['user'] as Map<String, dynamic>);
+
+  Future<AppUser> profile() async =>
+      AppUser.fromJson((await _getJson('/api/me/profile'))['profile'] as Map<String, dynamic>);
+
+  Future<Map<String, dynamic>> myStats({int days = 14}) =>
+      _getJson('/api/me/stats?days=$days');
+
+  Future<void> changePassword(String current, String next) =>
+      _postJson('/api/me/password', {'current': current, 'new': next});
+
   /// 轮询到终态。后端有 SSE，但移动端为省电用轮询更简单，1s 一次。
   Future<NoteJob> waitFor(String jobId,
       {Duration timeout = const Duration(seconds: 60)}) async {
@@ -191,5 +277,7 @@ class NotaClient {
     return job(jobId);
   }
 
+  /// Owned by `AppGate`, not by a page: logging out and back in reuses the same
+  /// http client, and closing it from a page would break the next session.
   void dispose() => _client.close();
 }

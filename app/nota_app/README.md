@@ -28,6 +28,23 @@ flutter run -d chrome --dart-define=NOTA_BASE=http://127.0.0.1:8787
 
 后端地址通过编译期常量注入，默认 `http://127.0.0.1:8787`。
 
+## 登录
+
+App 启动先要登录，账号与后台是同一套（种子账号密码统一 `123456`）：
+
+| 用户名 | 说明 |
+|---|---|
+| `zhangwei` | 普通用户，Free，自带历史记录 |
+| `lina` / `chenjing` | 普通用户，Pro |
+| `wangfang` / `liuyang` | 普通用户，Free |
+
+也可以在登录页切到「注册」自建账号（用户名 2–32 字符、密码 ≥6 位，固定 Free）。
+
+- **令牌怎么带**：登录成功后后端返回 `token`，App 用 `Authorization: Bearer <token>`。不用 Cookie，因为 `package:http` 不会跨启动保留 Cookie。
+- **存在哪**：`shared_preferences`（`nota.token` / `nota.user`），**明文**。演示可接受；生产应换成平台 keystore。
+- **过期怎么办**：任何接口返回 401 → `NotaClient.onUnauthorized` → 清凭据 → 回登录页并提示「登录已过期」。
+- **本地存储不可用时**：`AppGate` 有 5 秒超时与兜底，读不到就直接进登录页，不会卡在加载圈。
+
 ## 构建
 
 ```bash

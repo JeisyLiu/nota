@@ -10,6 +10,7 @@ The identity rules live in ``identity.py``; the reporting queries in
 from __future__ import annotations
 
 import logging
+import re
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -18,13 +19,18 @@ from ..application import auth_service, job_service
 from ..application.auth_service import SESSION_COOKIE
 from ..infrastructure import queries, repos
 from ..infrastructure.db import write_tx
-from .identity import account_payload, require_admin, require_user, resolve_user_id
+from .identity import (
+    account_payload, request_tokens, require_admin, require_user, resolve_user_id,
+)
 from .payloads import job_payload
 from .schemas import (
-    AdminReminderIn, AdminTodoIn, LoginIn, PasswordChangeIn, UserPatchIn,
+    AdminReminderIn, AdminTodoIn, LoginIn, PasswordChangeIn, RegisterIn, UserPatchIn,
 )
 
 log = logging.getLogger("nota.console")
+
+# 2-32 characters, no whitespace. Chinese usernames are allowed on purpose.
+_USERNAME_RE = re.compile(r"\S{2,32}")
 router = APIRouter()
 
 _MAX_DAYS = 90
@@ -77,7 +83,9 @@ def login(request: Request, payload: LoginIn):
             raise HTTPException(status_code=401, detail={"error": "bad_credentials",
                                                          "message": str(exc)}) from exc
         auth_service.purge_expired(conn, c.clock)
-        body = {"user": account_payload(user)}
+        # The token is returned for native clients, which cannot rely on a cookie
+        # jar; the browser simply keeps using the cookie set below.
+        body = {"user": account_payload(user), "token": token}
 
     response = JSONResponse(body)
     response.set_cookie(
@@ -90,12 +98,60 @@ def login(request: Request, payload: LoginIn):
     return response
 
 
+@router.post("/api/auth/register")
+def register(request: Request, payload: RegisterIn):
+    """Self-service sign-up.
+
+    Always creates a plain ``user`` on the free plan: role is not accepted from
+    the request body, so this endpoint can never mint an administrator.
+    """
+    c = _container(request)
+    username = payload.username.strip()
+    if not _USERNAME_RE.fullmatch(username):
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "bad_username",
+                    "message": "用户名需要 2–32 个字符，且不能包含空格"},
+        )
+
+    with c.db.session() as conn:
+        if repos.get_user_by_username(conn, username) is not None:
+            raise HTTPException(status_code=409,
+                                detail={"error": "username_taken",
+                                        "message": "用户名已被占用"})
+        user_id = repos.new_id("u")
+        with write_tx(conn):
+            repos.insert_account(
+                conn,
+                user_id=user_id,
+                username=username,
+                password_hash=auth_service.hash_password(payload.password),
+                display_name=(payload.display_name or username).strip() or username,
+                role="user",
+                plan="free",
+                clock=c.clock,
+            )
+            token = auth_service.create_session(conn, user_id, c.clock)
+        user = repos.get_user(conn, user_id)
+        body = {"user": account_payload(user), "token": token}
+
+    response = JSONResponse(body, status_code=201)
+    response.set_cookie(
+        SESSION_COOKIE, token,
+        max_age=auth_service.SESSION_TTL_DAYS * 24 * 3600,
+        httponly=True, samesite="lax", path="/",
+    )
+    return response
+
+
 @router.post("/api/auth/logout")
 def logout(request: Request):
     c = _container(request)
-    token = request.cookies.get(SESSION_COOKIE)
+    # Revoke every credential this request carries: the app's bearer token and
+    # the browser's cookie may both be present.
     with c.db.session() as conn:
-        auth_service.revoke_session(conn, token)
+        for token in request_tokens(request):
+            auth_service.revoke_session(conn, token)
     response = JSONResponse({"ok": True})
     response.delete_cookie(SESSION_COOKIE, path="/")
     return response

@@ -150,3 +150,91 @@ def test_password_change_revokes_other_sessions(console_app, client):
     fresh = TestClient(console_app)
     with fresh:
         assert _login(fresh, password="newpass123").status_code == 200
+
+
+# ------------------------------------------------------------------ register
+def _register(client, username="newbie", password="123456", display="新同学"):
+    return client.post("/api/auth/register",
+                       json={"username": username, "password": password,
+                             "display_name": display})
+
+
+def test_register_creates_a_plain_user_and_signs_them_in(client):
+    response = _register(client)
+    assert response.status_code == 201
+    user = response.json()["user"]
+    assert user["username"] == "newbie"
+    assert user["display_name"] == "新同学"
+    # Role and plan are decided server-side; the request cannot ask for more.
+    assert user["role"] == "user"
+    assert user["plan"] == "free"
+    assert response.json()["token"]
+    # Already signed in: the cookie works without a separate login call.
+    assert client.get("/api/auth/me").json()["user"]["username"] == "newbie"
+
+
+def test_register_rejects_duplicate_username(client):
+    assert _register(client, username="zhangwei").status_code == 409
+
+
+def test_register_validates_username_and_password(client):
+    assert _register(client, username="a").status_code == 422
+    assert _register(client, username="has space").status_code == 422
+    assert _register(client, username="okname", password="123").status_code == 422
+
+
+def test_register_ignores_a_role_in_the_body(client):
+    """A client must not be able to mint an administrator."""
+    response = client.post("/api/auth/register",
+                           json={"username": "sneaky", "password": "123456",
+                                 "role": "admin", "plan": "pro"})
+    assert response.status_code == 201
+    assert response.json()["user"]["role"] == "user"
+    assert response.json()["user"]["plan"] == "free"
+
+
+# ------------------------------------------------------------------ bearer
+def _bearer(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_login_also_returns_a_token_for_native_clients(client):
+    response = _login(client)
+    assert response.json()["token"]
+
+
+def test_bearer_token_works_on_customer_endpoints(console_app):
+    """The Flutter app cannot keep cookies; it sends the token instead."""
+    with TestClient(console_app) as first:
+        token = _login(first, "zhangwei").json()["token"]
+
+    with TestClient(console_app) as native:
+        quota = native.get("/api/quota", headers=_bearer(token))
+        assert quota.status_code == 200
+        assert quota.json()["limit"] == 10
+        profile = native.get("/api/me/profile", headers=_bearer(token))
+        assert profile.status_code == 200
+        assert profile.json()["profile"]["username"] == "zhangwei"
+
+
+def test_bearer_token_cannot_reach_the_admin_api(console_app):
+    with TestClient(console_app) as first:
+        token = _login(first, "zhangwei").json()["token"]
+    with TestClient(console_app) as native:
+        assert native.get("/api/admin/overview", headers=_bearer(token)).status_code == 403
+
+
+def test_logout_revokes_the_bearer_token(console_app):
+    with TestClient(console_app) as native:
+        token = _login(native, "zhangwei").json()["token"]
+        assert native.get("/api/auth/me", headers=_bearer(token)).status_code == 200
+        assert native.post("/api/auth/logout", headers=_bearer(token)).status_code == 200
+        assert native.get("/api/auth/me", headers=_bearer(token)).status_code == 401
+
+
+def test_expired_bearer_token_is_rejected(console_app):
+    with TestClient(console_app) as native:
+        token = _login(native, "zhangwei").json()["token"]
+        with console_app.state.container.db.session() as conn:
+            conn.execute("UPDATE sessions SET expires_at = '2000-01-01T00:00:00+00:00'")
+        assert native.get("/api/auth/me", headers=_bearer(token)).status_code == 401

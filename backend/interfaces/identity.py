@@ -1,14 +1,15 @@
 """Who is calling?
 
-Two identities coexist here on purpose:
+Three ways to be someone, in priority order:
 
-* the **web console** logs in, and carries an HttpOnly session cookie;
-* the **mobile client** and the scripts have no login and send ``X-User-Id``.
+1. an **Authorization: Bearer** token -- the mobile app, because ``package:http``
+   does not persist cookies across launches;
+2. a **session cookie** -- the web console, where the browser handles it;
+3. the legacy **X-User-Id** header -- scripts and the verification suite.
 
-The MVP shipped with the header, and the app depends on it, so it stays. The
-important rule is that the header is *only* accepted on the customer-facing
-endpoints -- anything under ``/api/admin`` resolves strictly from a session, so a
-header cannot impersonate an administrator.
+All three customer-facing paths are the same idea; only the transport differs. The
+important rule is that ``/api/admin/*`` resolves strictly from a real session
+(token or cookie), so a header cannot impersonate an administrator.
 """
 from __future__ import annotations
 
@@ -24,10 +25,29 @@ def session_token(request: Request) -> str | None:
     return request.cookies.get(auth_service.SESSION_COOKIE)
 
 
+def bearer_token(request: Request) -> str | None:
+    """The token from ``Authorization: Bearer <token>``, if present."""
+    header = request.headers.get("Authorization") or ""
+    if not header.lower().startswith("bearer "):
+        return None
+    token = header[7:].strip()
+    return token or None
+
+
+def request_tokens(request: Request) -> list[str]:
+    """Every token this request carries, so logout can revoke all of them."""
+    return [token for token in (bearer_token(request), session_token(request))
+            if token]
+
+
 def current_account(request: Request) -> sqlite3.Row | None:
-    """The logged-in account, or None."""
+    """The logged-in account, or None.
+
+    Bearer first: if a client sends both, the explicit token is the more specific
+    statement of intent.
+    """
     container = request.app.state.container
-    token = session_token(request)
+    token = bearer_token(request) or session_token(request)
     if not token:
         return None
     with container.db.session() as conn:
@@ -35,7 +55,7 @@ def current_account(request: Request) -> sqlite3.Row | None:
 
 
 def resolve_user_id(request: Request) -> str:
-    """Identity for customer endpoints: session first, then the header."""
+    """Identity for customer endpoints: token, then cookie, then the header."""
     account = current_account(request)
     if account is not None:
         return account["id"]

@@ -127,6 +127,27 @@ try {
     Check "admin can file a todo for a user" ($filed.todo.title -eq "verify-admin-todo") $filed.todo.title
     Check "filed todo carries a timezone" ($filed.todo.due_at -like "*+08:00") $filed.todo.due_at
 
+    # The mobile path: register creates an account and hands back a token, which
+    # the app then sends as a Bearer header instead of a cookie.
+    $newUser = "verify_" + (Get-Random -Maximum 999999)
+    $registerBody = @{ username = $newUser; password = "verify123" } | ConvertTo-Json
+    $registered = Invoke-RestMethod -Uri "$base/api/auth/register" -Method Post `
+        -Body ([System.Text.Encoding]::UTF8.GetBytes($registerBody)) `
+        -ContentType "application/json" -TimeoutSec 10
+    Check "register returns a token" (-not [string]::IsNullOrWhiteSpace($registered.token)) ""
+    Check "registered account is a plain user" ($registered.user.role -eq "user") $registered.user.role
+
+    $bearer = @{ Authorization = "Bearer " + $registered.token }
+    $mobileQuota = Invoke-RestMethod -Uri "$base/api/quota" -Headers $bearer -TimeoutSec 5
+    Check "bearer token works like a session" ($mobileQuota.limit -eq 10) $mobileQuota.limit
+    $blockedAdmin = $false
+    try {
+        Invoke-WebRequest -Uri "$base/api/admin/overview" -Headers $bearer -UseBasicParsing | Out-Null
+    } catch {
+        $blockedAdmin = $true
+    }
+    Check "bearer token cannot reach the admin API" $blockedAdmin ""
+
     $logout = Invoke-WebRequest -Uri "$base/api/auth/logout" -Method Post `
         -WebSession $session -UseBasicParsing -TimeoutSec 5
     Check "logout -> 200" ($logout.StatusCode -eq 200) $logout.StatusCode

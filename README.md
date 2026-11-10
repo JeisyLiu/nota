@@ -205,10 +205,12 @@ flutter run --dart-define=NOTA_BASE=http://10.0.2.2:8787              # Android 
 - **STT 需要可选依赖**。`pip install faster-whisper` 才能用语音输入；不装就打字，产品仍然完整。
 - **SQLite 单机**。多实例部署需要换成 Postgres + 行级锁，账本逻辑可以照搬（`docs/decisions.md` ADR-004）。
 - **Wokwi 无麦克风模型**。仿真能跑通「按键→录音→上传→灯态」，但音频是占位正弦波，转写不出真实语句；真实语音链路用虚拟设备或真机验证。
-- 演示视频按你的要求不做，交付物是仓库本身。
+- 演示视频不进仓库；录屏步骤见 [guide.md](guide.md) 与 [docs/demo-script.md](docs/demo-script.md)。
 
 ## 文档
 
+- [演示操作流程](guide.md) —— 逐步操作 + 可照读的语音台词
+- [录屏脚本（含口播）](docs/demo-script.md)
 - [架构与数据流](docs/architecture.md)
 - [技术决策记录 ADR](docs/decisions.md)
 - [硬件与设备协议](docs/hardware.md)

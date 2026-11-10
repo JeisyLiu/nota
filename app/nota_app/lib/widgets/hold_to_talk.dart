@@ -44,9 +44,16 @@ class _HoldToTalkButtonState extends State<HoldToTalkButton>
         : Theme.of(context).colorScheme.primary;
 
     return GestureDetector(
-      onLongPressStart: widget.enabled ? (_) => widget.onStart() : null,
-      onLongPressEnd: widget.enabled ? (_) => widget.onStop() : null,
-      onLongPressCancel: widget.enabled ? () => widget.onStop() : null,
+      // Tap-down/up instead of long-press: a long-press recogniser only fires
+      // after ~500ms, so a normal click looked like a dead button. Pressing down
+      // now starts recording immediately and releasing stops it, which is both
+      // what a walkie-talkie should do and what a mouse click naturally produces.
+      behavior: HitTestBehavior.opaque,
+      onTapDown: widget.enabled ? (_) => widget.onStart() : null,
+      onTapUp: widget.enabled ? (_) => widget.onStop() : null,
+      // Fires when the pointer drifts off the button while still held; without
+      // this the recorder would keep running with no way to stop it.
+      onTapCancel: widget.enabled ? () => widget.onStop() : null,
       child: AnimatedBuilder(
         animation: _pulse,
         builder: (context, _) {

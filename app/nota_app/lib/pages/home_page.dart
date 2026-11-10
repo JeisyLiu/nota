@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:cross_file/cross_file.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
@@ -27,8 +30,15 @@ class _HomePageState extends State<HomePage> {
   Quota? _quota;
   List<NoteSummary> _notes = const [];
   String? _status;
+  bool _statusError = false;
+  Timer? _statusTimer;
   bool _recording = false;
   bool _busy = false;
+  DateTime? _recordStartedAt;
+
+  /// Below this, the clip is a stray click rather than a sentence. Sending it
+  /// would burn a quota unit and produce a whisper "no speech" failure.
+  static const _minRecordMs = 700;
 
   @override
   void initState() {
@@ -38,6 +48,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    _statusTimer?.cancel();
     _recorder.dispose();
     _textController.dispose();
     widget.client.dispose();
@@ -66,44 +77,185 @@ class _HomePageState extends State<HomePage> {
 
   void _toast(String text, {bool error = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(text),
-      backgroundColor: error ? const Color(0xFF3A1F22) : const Color(0xFF1D212A),
-      behavior: SnackBarBehavior.floating,
-    ));
+    // Shown inside the bottom bar rather than as a SnackBar: the floating
+    // SnackBar overlaps the action bar and gets clipped by the window edge, so
+    // failures looked like the button doing nothing. The bar is where the user's
+    // attention already is, and nothing can cover it.
+    _statusTimer?.cancel();
+    setState(() {
+      _status = text;
+      _statusError = error;
+    });
+    _statusTimer = Timer(const Duration(seconds: 6), () {
+      if (!mounted) return;
+      setState(() {
+        _status = null;
+        _statusError = false;
+      });
+    });
   }
 
   // ------------------------------------------------------------------ 录音
+  /// In-flight start. A quick tap fires onTapUp before onTapDown's async work
+  /// finishes, which used to make stop() run against a recorder that had not
+  /// started yet; stop() then returned null and the clip was silently lost.
+  /// Both handlers now await this before touching the recorder.
+  Future<void>? _starting;
+
   Future<void> _startRecording() async {
-    if (!await _recorder.hasPermission()) {
-      _toast('没有麦克风权限', error: true);
-      return;
+    // Measured from the press, not from when start() resolves, so the
+    // too-short guard cannot be bypassed by a fast click.
+    _recordStartedAt ??= DateTime.now();
+    _starting = _doStart();
+    await _starting;
+  }
+
+  Future<void> _doStart() async {
+    // Everything here can fail on a desktop build with no usable input device,
+    // and an uncaught async error in a release build is invisible: the button
+    // just looks dead. So each step is caught and surfaced.
+    try {
+      if (!await _recorder.hasPermission()) {
+        _toast('没有麦克风权限。Windows 上请在 设置 → 隐私 → 麦克风 里允许桌面应用访问。',
+            error: true);
+        return;
+      }
+      // hasPermission() returns true on Windows even with no capture device at
+      // all, so check for one explicitly to give an accurate message instead of
+      // a vague "nothing was recorded" later.
+      if (!kIsWeb) {
+        try {
+          final devices = await _recorder
+              .listInputDevices()
+              .timeout(const Duration(milliseconds: 800));
+          if (devices.isEmpty) {
+            _recordStartedAt = null;
+            _toast('这台电脑没有可用麦克风（系统未检测到录音设备）。'
+                '可以先用下方输入框打字，效果完全一样。', error: true);
+            return;
+          }
+        } catch (_) {
+          // Listing is best-effort and can hang or fail with no device present;
+          // either way let start() try, and surface its error if it fails.
+        }
+      }
+      // Web 上没有临时目录，record 会忽略 path 并返回一个 blob URL。
+      final path = kIsWeb
+          ? ''
+          : '${(await getTemporaryDirectory()).path}/nota-'
+              '${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
+      if (!mounted) return;
+      setState(() {
+        _recording = true;
+        _status = '正在录音…';
+        _statusError = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _recording = false;
+        _status = null;
+      });
+      _toast(_recordErrorMessage(e), error: true);
     }
-    // Web 上没有临时目录，record 会忽略 path 并返回一个 blob URL。
-    final path = kIsWeb
-        ? ''
-        : '${(await getTemporaryDirectory()).path}/nota-'
-            '${DateTime.now().millisecondsSinceEpoch}.m4a';
-    await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
-    setState(() {
-      _recording = true;
-      _status = '正在录音…';
-    });
+  }
+
+  /// Turn a raw recorder failure into advice the user can act on.
+  ///
+  /// record_windows reports the bare Windows HRESULT text ("Element not found",
+  /// 0x80070490 and friends) when it cannot create a capture device, which reads
+  /// as a crash rather than as "there is no microphone here".
+  String _recordErrorMessage(Object e) {
+    final text = e.toString();
+    if (e is PlatformException && e.code == 'Record') {
+      final detail = e.message ?? '';
+      final noDevice = detail.isEmpty ||
+          text.contains('80070490') ||
+          text.contains('88890003') ||
+          text.contains('Element not found') ||
+          text.contains('not found') ||
+          text.contains('找不到');
+      if (noDevice) {
+        return '这台电脑没有可用麦克风（系统未检测到录音设备）。'
+            '可以先用下方输入框打字，效果完全一样。';
+      }
+      return '录音设备不可用：$detail';
+    }
+    return '录音失败：$text';
   }
 
   Future<void> _stopRecording() async {
-    final path = await _recorder.stop();
-    setState(() {
-      _recording = false;
-      _status = '上传中…';
-    });
-    if (path == null) {
-      setState(() => _status = null);
-      return;
+    try {
+      // Wait for a still-running start, otherwise stop() hits an unstarted
+      // recorder and the clip is dropped. Bounded, because a hung platform call
+      // must not leave the button unresponsive forever.
+      final start = _starting;
+      if (start != null) {
+        try {
+          await start.timeout(const Duration(seconds: 4));
+        } catch (_) {
+          // Timed out or failed; fall through and let stop() try.
+        }
+        _starting = null;
+      }
+
+      final held = _recordStartedAt == null
+          ? null
+          : DateTime.now().difference(_recordStartedAt!);
+      _recordStartedAt = null;
+
+      // If the start never got going (no device, no permission), it has already
+      // explained why; stopping now would just overwrite that with a less useful
+      // message.
+      final started = _recording;
+      final path = await _recorder.stop().timeout(
+            const Duration(seconds: 5),
+            onTimeout: () => null,
+          );
+      if (!mounted) return;
+
+      // If the start never got going (no device, no permission), it has already
+      // explained why and owns the status line. Returning before touching
+      // _status is what keeps that explanation on screen instead of blanking it
+      // the instant the finger lifts.
+      if (!started) return;
+
+      setState(() {
+        _recording = false;
+        _status = null;
+      });
+
+      // A stray click must not cost the user a quota unit or a failed job.
+      if (held != null && held.inMilliseconds < _minRecordMs) {
+        _toast('按住时间太短，请按住说话按钮，说完再松手。');
+        return;
+      }
+      if (path == null) {
+        _toast('没有录到音频，请确认麦克风可用后重试。', error: true);
+        return;
+      }
+      // 用 cross_file 读字节：移动端读本地文件，Web 端直接 fetch blob URL。
+      final bytes = await XFile(path).readAsBytes();
+      if (bytes.isEmpty) {
+        _toast('录音文件是空的，请确认麦克风可用后重试。', error: true);
+        return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _status = '上传中…';
+        _statusError = false;
+      });
+      await _submit(() => widget.client.sendAudio(bytes, filename: 'note.m4a'));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _recording = false;
+        _recordStartedAt = null;
+        _status = null;
+      });
+      _toast(_recordErrorMessage(e), error: true);
     }
-    // 用 cross_file 读字节：移动端读本地文件，Web 端直接 fetch blob URL。
-    final bytes = await XFile(path).readAsBytes();
-    await _submit(() => widget.client.sendAudio(bytes, filename: 'note.m4a'));
   }
 
   Future<void> _sendText() async {
@@ -115,18 +267,26 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _submit(Future<Map<String, dynamic>> Function() submit) async {
     if (_busy) return;
+    _statusTimer?.cancel();
     setState(() {
       _busy = true;
-      _status ??= '提交中…';
+      // Always replaces a leftover error line, so starting a new submission
+      // cannot leave a stale red message on screen.
+      _status = '提交中…';
+      _statusError = false;
     });
     try {
       final created = await submit();
       final jobId = created['job_id'] as String;
-      setState(() => _status = 'Agent 正在处理…');
+      setState(() {
+        _status = 'Agent 正在处理…';
+        _statusError = false;
+      });
       final job = await widget.client.waitFor(jobId);
       if (!mounted) return;
       setState(() {
         _status = null;
+        _statusError = false;
         _busy = false;
       });
       await _refresh();
@@ -280,8 +440,17 @@ class _HomePageState extends State<HomePage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (_status != null) ...[
-                Text(_status!,
-                    style: const TextStyle(fontSize: 12, color: Color(0xFF8B93A7))),
+                Text(
+                  _status!,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.4,
+                    color: _statusError
+                        ? const Color(0xFFFCA5A5)
+                        : const Color(0xFF8B93A7),
+                  ),
+                ),
                 const SizedBox(height: 8),
               ],
               if (exhausted) ...[

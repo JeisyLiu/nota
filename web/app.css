@@ -477,3 +477,16 @@ button.ghost:hover { color: var(--text); border-color: var(--accent-2); }
   background: #10131a; border: 1px solid var(--line); border-radius: 8px;
   padding: 8px 10px; font-size: 11.5px; color: #b8c0d4; overflow-x: auto;
 }
+
+/* Admin: filing a task for a user, and the lists that show the result. */
+.form-inline.stack { flex-direction: column; align-items: stretch; gap: 8px; }
+.form-inline.stack input { width: 100%; }
+.form-inline.stack button { align-self: flex-start; }
+
+.plain-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.plain-list li {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px;
+  font-size: 13px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.04);
+}
+.plain-list li:last-child { border-bottom: none; }
+.plain-list .empty { display: block; color: var(--muted); font-size: 12px; padding: 8px 0; }

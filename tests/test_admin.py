@@ -207,3 +207,55 @@ def test_note_list_and_search(client):
     assert len(notes) == 3
     found = client.get("/api/admin/notes?q=记录 1").json()["notes"]
     assert len(found) == 1
+
+
+# ------------------------------------------------- admin filing for a user
+def test_admin_can_add_a_todo_for_a_user(client):
+    response = client.post("/api/admin/users/u_zhang/todos",
+                           json={"title": "给张总回电话", "due_at": "2026-11-12T15:00"})
+    assert response.status_code == 200
+    todo = response.json()["todo"]
+    assert todo["title"] == "给张总回电话"
+    # A browser datetime-local value carries no timezone; it must be anchored to
+    # the user's zone, not stored naive.
+    assert todo["due_at"].endswith("+08:00")
+
+    with client.app.state.container.db.session() as conn:
+        rows = repos.list_todos(conn, "u_zhang", limit=50)
+    assert any(row["title"] == "给张总回电话" for row in rows)
+
+
+def test_admin_can_add_a_reminder_for_a_user(client):
+    response = client.post("/api/admin/users/u_zhang/reminders",
+                           json={"title": "提醒他交周报", "fire_at": "2026-11-13T09:30"})
+    assert response.status_code == 200
+    reminder = response.json()["reminder"]
+    assert reminder["title"] == "提醒他交周报"
+    assert reminder["fire_at"].endswith("+08:00")
+
+
+def test_user_detail_lists_todos_and_reminders(client):
+    client.post("/api/admin/users/u_zhang/todos", json={"title": "整理合同"})
+    client.post("/api/admin/users/u_zhang/reminders",
+                json={"title": "回访", "fire_at": "2026-11-14T10:00"})
+    data = client.get("/api/admin/users/u_zhang").json()
+    assert any(todo["title"] == "整理合同" for todo in data["todos"])
+    assert any(item["title"] == "回访" for item in data["reminders"])
+
+
+def test_admin_actions_need_a_valid_user_and_payload(client):
+    assert client.post("/api/admin/users/u_missing/todos",
+                       json={"title": "x"}).status_code == 404
+    assert client.post("/api/admin/users/u_zhang/todos",
+                       json={"title": ""}).status_code == 422
+    assert client.post("/api/admin/users/u_zhang/todos",
+                       json={"title": "x", "due_at": "not-a-date"}).status_code == 422
+    assert client.post("/api/admin/users/u_zhang/reminders",
+                       json={"title": "x", "fire_at": "nope"}).status_code == 422
+
+
+def test_normal_user_cannot_file_for_others(client):
+    client.post("/api/auth/logout")
+    assert _login(client, "zhangwei").status_code == 200
+    response = client.post("/api/admin/users/u_zhang/todos", json={"title": "偷偷加一条"})
+    assert response.status_code == 403

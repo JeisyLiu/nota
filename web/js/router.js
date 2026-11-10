@@ -14,6 +14,7 @@ export function createRouter({ routes, view, title, nav, user, home }) {
   function renderNav(active) {
     clear(nav);
     for (const route of allowed) {
+      if (route.hidden) continue;
       const link = el("a", "nav-item" + (route.path === active ? " active" : ""), route.label);
       link.href = "#" + route.path;
       nav.appendChild(link);

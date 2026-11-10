@@ -20,7 +20,9 @@ from ..infrastructure import queries, repos
 from ..infrastructure.db import write_tx
 from .identity import account_payload, require_admin, require_user, resolve_user_id
 from .payloads import job_payload
-from .schemas import LoginIn, PasswordChangeIn, UserPatchIn
+from .schemas import (
+    AdminReminderIn, AdminTodoIn, LoginIn, PasswordChangeIn, UserPatchIn,
+)
 
 log = logging.getLogger("nota.console")
 router = APIRouter()
@@ -34,6 +36,32 @@ def _container(request: Request):
 
 def _days(value: int) -> int:
     return max(1, min(int(value or 14), _MAX_DAYS))
+
+
+def _normalize_iso(value: str, tz: str) -> str:
+    """Turns a browser datetime-local value into an absolute, tz-aware ISO string.
+
+    ``datetime-local`` has no timezone, so a bare ``2026-11-12T15:00`` is read as
+    the *user's* local time. Storing it naive would make later string comparisons
+    (the reminder sweep) subtly wrong, so it always leaves here with an offset.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422,
+                            detail={"error": "bad_time",
+                                    "message": f"时间格式无法解析：{value}"}) from exc
+    if parsed.tzinfo is None:
+        try:
+            parsed = parsed.replace(tzinfo=ZoneInfo(tz or "Asia/Shanghai"))
+        except Exception:  # noqa: BLE001 - unknown tz, fall back to +08:00
+            from datetime import timedelta, timezone
+
+            parsed = parsed.replace(tzinfo=timezone(timedelta(hours=8)))
+    return parsed.isoformat(timespec="seconds")
 
 
 # --------------------------------------------------------------------- auth
@@ -191,8 +219,50 @@ def admin_user_detail(request: Request, user_id: str, days: int = 14):
             "stats": queries.user_stats(conn, user_id,
                                         since=queries.since_iso(c.clock, window)),
             "activity": queries.user_activity(conn, user_id, limit=20),
+            "todos": [dict(row) for row in repos.list_todos(conn, user_id, limit=20)],
+            "reminders": [dict(row) for row in repos.list_reminders(conn, user_id)][:20],
             "days": window,
         }
+
+
+@router.post("/api/admin/users/{user_id}/todos")
+def admin_add_todo(request: Request, user_id: str, payload: AdminTodoIn):
+    """Files a task for someone else.
+
+    Support staff often need to add a task while on the phone with a customer;
+    making them log in as that customer would be worse in every way. The row is
+    an ordinary todo, so the user sees it in their own list immediately.
+    """
+    require_admin(request)
+    c = _container(request)
+    with c.db.session() as conn:
+        user = repos.get_user(conn, user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail={"error": "user_not_found"})
+        due_at = _normalize_iso(payload.due_at, user["tz"]) if payload.due_at else None
+        with write_tx(conn):
+            todo = repos.insert_todo(
+                conn, user_id=user_id, title=payload.title.strip(),
+                due_at=due_at, note_id=None, clock=c.clock,
+            )
+        return {"todo": todo}
+
+
+@router.post("/api/admin/users/{user_id}/reminders")
+def admin_add_reminder(request: Request, user_id: str, payload: AdminReminderIn):
+    require_admin(request)
+    c = _container(request)
+    with c.db.session() as conn:
+        user = repos.get_user(conn, user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail={"error": "user_not_found"})
+        fire_at = _normalize_iso(payload.fire_at, user["tz"])
+        with write_tx(conn):
+            reminder = repos.insert_reminder(
+                conn, user_id=user_id, title=payload.title.strip(),
+                fire_at=fire_at, clock=c.clock,
+            )
+        return {"reminder": reminder}
 
 
 @router.patch("/api/admin/users/{user_id}")

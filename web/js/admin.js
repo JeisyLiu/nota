@@ -134,7 +134,7 @@ export async function renderAdminUsers(view) {
         actions.appendChild(select);
       }
       const detail = el("a", "link", "详情");
-      detail.href = `#/admin/users/${encodeURIComponent(user.user_id)}`;
+      detail.href = `#/admin/users/detail/${encodeURIComponent(user.user_id)}`;
       actions.appendChild(detail);
 
       return [
@@ -198,7 +198,102 @@ export async function renderAdminUserDetail(view, ctx) {
     info.appendChild(el("dt", "", label));
     info.appendChild(el("dd", "", value));
   }
-  view.appendChild(section("账号资料", "", info));
+
+  // Filing something for a user is the one write action the console offers.
+  const todoForm = el("form", "form-inline stack");
+  const todoTitle = el("input");
+  todoTitle.placeholder = "待办内容，例如：给张总回电话";
+  todoTitle.required = true;
+  const todoDue = el("input");
+  todoDue.type = "datetime-local";
+  const todoSubmit = el("button", "primary small", "添加待办");
+  todoSubmit.type = "submit";
+  todoForm.append(todoTitle, todoDue, todoSubmit);
+
+  const reminderForm = el("form", "form-inline stack");
+  const reminderTitle = el("input");
+  reminderTitle.placeholder = "提醒内容，例如：提醒他交周报";
+  reminderTitle.required = true;
+  const reminderAt = el("input");
+  reminderAt.type = "datetime-local";
+  reminderAt.required = true;
+  const reminderSubmit = el("button", "primary small", "添加提醒");
+  reminderSubmit.type = "submit";
+  reminderForm.append(reminderTitle, reminderAt, reminderSubmit);
+
+  const reload = async () => {
+    clear(view);
+    await renderAdminUserDetail(view, ctx);
+  };
+
+  todoForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    todoSubmit.disabled = true;
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(profile.user_id)}/todos`, {
+        method: "POST",
+        body: { title: todoTitle.value.trim(), due_at: todoDue.value || null },
+      });
+      toast("已为用户添加待办");
+      await reload();
+    } catch (error) {
+      toast(error.message || "添加失败", true);
+      todoSubmit.disabled = false;
+    }
+  });
+
+  reminderForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    reminderSubmit.disabled = true;
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(profile.user_id)}/reminders`, {
+        method: "POST",
+        body: { title: reminderTitle.value.trim(), fire_at: reminderAt.value },
+      });
+      toast("已为用户添加提醒");
+      await reload();
+    } catch (error) {
+      toast(error.message || "添加失败", true);
+      reminderSubmit.disabled = false;
+    }
+  });
+
+  const forms = el("div");
+  forms.appendChild(el("p", "panel-sub", "时间为该用户的本地时间，留空表示没有截止时间。"));
+  forms.appendChild(todoForm);
+  forms.appendChild(reminderForm);
+
+  const pair = el("div", "two-col");
+  pair.appendChild(section("账号资料", "由管理员维护", info));
+  pair.appendChild(section("代用户添加", "不用对方的账号也能补一条", forms));
+  view.appendChild(pair);
+
+  const todoList = el("ul", "plain-list");
+  if (!data.todos.length) todoList.appendChild(el("li", "empty", "暂无待办"));
+  for (const todo of data.todos) {
+    const li = el("li");
+    li.appendChild(el("span", "state " + (todo.status === "done" ? "done" : "queued"),
+      todo.status === "done" ? "已完成" : "未完成"));
+    li.appendChild(el("span", "", todo.title));
+    li.appendChild(el("span", "muted", todo.due_at ? fmtTime(todo.due_at) : "无截止"));
+    todoList.appendChild(li);
+  }
+
+  const reminderList = el("ul", "plain-list");
+  if (!data.reminders.length) reminderList.appendChild(el("li", "empty", "暂无提醒"));
+  for (const reminder of data.reminders) {
+    const li = el("li");
+    li.appendChild(el("span", "state " + (reminder.state === "scheduled" ? "queued" : "done"),
+      reminder.state === "scheduled" ? "待触发" : "已触发"));
+    li.appendChild(el("span", "", reminder.title));
+    li.appendChild(el("span", "muted", fmtTime(reminder.fire_at)));
+    reminderList.appendChild(li);
+  }
+
+  const pair2 = el("div", "two-col");
+  pair2.appendChild(section("该用户的待办", `共 ${data.todos.length} 条（最多显示 20）`, todoList));
+  pair2.appendChild(section("该用户的提醒", `共 ${data.reminders.length} 条（最多显示 20）`, reminderList));
+  view.appendChild(pair2);
 
   const rows = data.activity.map((item) => [
     fmtTime(item.created_at),

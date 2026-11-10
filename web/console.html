@@ -59,6 +59,10 @@
     { path: "/profile", label: "个人信息", render: renderProfile },
     { path: "/admin", label: "全局概览", admin: true, render: renderAdminOverview },
     { path: "/admin/users", label: "用户管理", admin: true, render: renderAdminUsers },
+    // Reached from the "详情" link in the user table, not from the sidebar. A
+    // distinct path so the prefix matcher prefers it over /admin/users.
+    { path: "/admin/users/detail", label: "用户详情", admin: true, hidden: true,
+      render: renderAdminUserDetail },
     { path: "/admin/jobs", label: "任务管理", admin: true, render: renderAdminJobs },
     { path: "/admin/notes", label: "记录管理", admin: true, render: renderAdminNotes },
     { path: "/admin/approvals", label: "待审批", admin: true, render: renderAdminApprovals },

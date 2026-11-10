@@ -116,6 +116,17 @@ try {
     Check "admin overview returns accounts" ($overview.totals.users -ge 6) $overview.totals.users
     $users = Invoke-RestMethod -Uri "$base/api/admin/users" -WebSession $session -TimeoutSec 10
     Check "five mock users plus admin" (@($users.users).Count -ge 6) (@($users.users).Count)
+
+    # ASCII on purpose: Windows PowerShell 5.1 decodes a JSON response with no
+    # charset as Latin-1, so a Chinese comparison would fail on the harness rather
+    # than on the server. Exact UTF-8 handling is covered by pytest.
+    $filedBody = @{ title = "verify-admin-todo"; due_at = "2026-12-01T09:00" } | ConvertTo-Json
+    $filed = Invoke-RestMethod -Uri "$base/api/admin/users/u_zhangwei/todos" -Method Post `
+        -Body ([System.Text.Encoding]::UTF8.GetBytes($filedBody)) `
+        -ContentType "application/json" -WebSession $session -TimeoutSec 10
+    Check "admin can file a todo for a user" ($filed.todo.title -eq "verify-admin-todo") $filed.todo.title
+    Check "filed todo carries a timezone" ($filed.todo.due_at -like "*+08:00") $filed.todo.due_at
+
     $logout = Invoke-WebRequest -Uri "$base/api/auth/logout" -Method Post `
         -WebSession $session -UseBasicParsing -TimeoutSec 5
     Check "logout -> 200" ($logout.StatusCode -eq 200) $logout.StatusCode

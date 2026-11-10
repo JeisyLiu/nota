@@ -122,3 +122,16 @@ class UserPatchIn(BaseModel):
     # Only the plan is editable: accounts are demo fixtures, and deleting them
     # would break the recording.
     plan: str | None = Field(default=None, pattern="^(free|pro)$")
+
+
+class AdminTodoIn(BaseModel):
+    """Admin filing a task on someone's behalf."""
+
+    title: str = Field(min_length=1, max_length=200)
+    # Naive local time is accepted and interpreted in the user's timezone.
+    due_at: str | None = Field(default=None, max_length=40)
+
+
+class AdminReminderIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    fire_at: str = Field(min_length=1, max_length=40)

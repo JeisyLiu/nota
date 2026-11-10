@@ -1,14 +1,13 @@
 import 'dart:async';
 
 import 'package:cross_file/cross_file.dart';
-import 'package:flutter/foundation.dart'
-    show kIsWeb, defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:path_provider/path_provider.dart';
-import 'package:record/record.dart';
 
 import '../api/nota_client.dart';
+import '../audio/note_recorder.dart';
 import '../models/models.dart';
 import '../widgets/hold_to_talk.dart';
 import '../widgets/quota_bar.dart';
@@ -25,7 +24,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final _recorder = AudioRecorder();
+  final _recorder = createNoteRecorder();
   final _textController = TextEditingController();
 
   Quota? _quota;
@@ -41,9 +40,6 @@ class _HomePageState extends State<HomePage> {
   /// would burn a quota unit and produce a whisper "no speech" failure.
   static const _minRecordMs = 700;
 
-  /// Extension of the clip currently being recorded, so the upload carries a
-  /// truthful filename.
-  String _recordExtension = 'm4a';
 
   @override
   void initState() {
@@ -124,55 +120,19 @@ class _HomePageState extends State<HomePage> {
         return;
       }
 
-      // Known-broken path: record_windows calls into Media Foundation and takes
-      // an access violation inside MFPlat.DLL when it opens the capture device on
-      // this Windows build (11 26100). It is a native crash, so nothing here can
-      // catch it -- the whole app dies. Refusing the attempt keeps the build
-      // usable for everything else; recording itself is verified working on
-      // Android and Web, which use different platform implementations.
-      // Flip with --dart-define=NOTA_WINDOWS_RECORDING=true once the plugin is
-      // replaced or fixed.
-      const allowWindowsRecording =
-          bool.fromEnvironment('NOTA_WINDOWS_RECORDING', defaultValue: false);
-      if (!kIsWeb &&
-          defaultTargetPlatform == TargetPlatform.windows &&
-          !allowWindowsRecording) {
-        _recordStartedAt = null;
-        _toast('Windows 桌面版的录音插件在当前系统上会崩溃，已暂时禁用。'
-            '手机版和网页版录音正常。', error: true);
-        return;
-      }
-
       // Which microphone to use is the operating system's decision, not ours:
-      // no device id is passed, so the recorder takes the system default and
-      // follows it if the user plugs one in. Enumerating devices here would be
-      // exactly the coupling we do not want, and it also lied on this machine,
-      // which has endpoints but returned an empty list.
-
-      // The codec is chosen once, per platform, and never retried in-process:
-      // record_windows crashes natively if start() is called again after a
-      // failed start, which killed the app outright. WAV is the safe choice on
-      // Windows because the plugin writes the header itself instead of going
-      // through a Media Foundation encoder that may not be installed; mobile and
-      // web keep AAC, which is far smaller. The backend transcodes either way.
-      final isWindows = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
-      final encoder = isWindows ? AudioEncoder.wav : AudioEncoder.aacLc;
-      final extension = isWindows ? 'wav' : 'm4a';
-
-      // Web has no temp directory; record ignores path and returns a blob URL.
+      // nothing here enumerates or picks a device. Both recorder implementations
+      // ask the platform for its default input and follow it if the user plugs
+      // one in. The file format is the recorder's own business too -- it knows
+      // what its platform can actually produce.
+      //
+      // Web has no temp directory; the plugin ignores path and returns a blob URL.
       final path = kIsWeb
           ? ''
           : '${(await getTemporaryDirectory()).path}/nota-'
-              '${DateTime.now().millisecondsSinceEpoch}.$extension';
-      // Ask for the format the pipeline actually wants (16 kHz mono) instead of
-      // letting Media Foundation open the device at whatever it prefers. Whisper
-      // resamples to 16 kHz anyway, and a stereo 44.1 kHz default makes the
-      // device negotiate a format it may not support.
-      await _recorder.start(
-        RecordConfig(encoder: encoder, sampleRate: 16000, numChannels: 1),
-        path: path,
-      );
-      _recordExtension = extension;
+              '${DateTime.now().millisecondsSinceEpoch}.'
+              '${_recorder.fileExtension}';
+      await _recorder.start(path);
       if (!mounted) return;
       setState(() {
         _recording = true;
@@ -197,6 +157,9 @@ class _HomePageState extends State<HomePage> {
   /// capture device" are interpreted; anything else keeps its original wording
   /// so a real cause is never hidden behind a guess.
   String _recordErrorMessage(Object e) {
+    if (e is RecorderUnavailable) {
+      return '无法录音：${e.message}';
+    }
     final text = e.toString();
     if (e is PlatformException && e.code == 'Record') {
       final detail = e.message ?? '';
@@ -278,7 +241,7 @@ class _HomePageState extends State<HomePage> {
       });
       await _submit(() => widget.client.sendAudio(
             bytes,
-            filename: 'note.$_recordExtension',
+            filename: 'note.${_recorder.fileExtension}',
           ));
     } catch (e) {
       if (!mounted) return;

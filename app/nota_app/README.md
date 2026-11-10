@@ -33,9 +33,37 @@ flutter run -d chrome --dart-define=NOTA_BASE=http://127.0.0.1:8787
 ```bash
 flutter build apk --debug     # 已验证：build/app/outputs/flutter-apk/app-debug.apk
 flutter build web --release   # 已验证：build/web
+flutter build windows --release  # 已验证：build/windows/x64/runner/Release/nota_app.exe
 flutter analyze               # 已验证：0 issue
 flutter test                  # 已验证：11 项通过
 ```
+
+## 录音为什么有两套实现
+
+界面只依赖 `lib/audio/note_recorder.dart` 里的 `NoteRecorder` 接口，平台各自实现：
+
+| 平台 | 实现 | 走什么 |
+|---|---|---|
+| Android / iOS / Web | `PluginNoteRecorder` | `record` 插件 |
+| Windows | `WindowsNoteRecorder` | `windows/runner/audio_recorder.cpp`（WASAPI） |
+
+Windows 单独实现不是洁癖，是因为 `record` 插件的 Windows 后端在这个系统上会崩：
+它经过 Media Foundation，打开采集设备时在 `MFPlat.DLL` 里触发访问冲突
+（`0xc0000005`），整个进程直接被杀——Dart 的 `try/catch` 拦不住原生崩溃。
+
+排查过程也记录一下，免得后人重走：
+
+1. 先怀疑设备，结果 MME 能打开设备但 `WOM_DONE` 一个回调都不给（采到 0 字节）；
+2. `ffmpeg -f dshow` 能正常录到这个麦克风，说明设备本身没问题；
+3. 最后换 WASAPI（Windows 自己录音走的就是这层，不是 Media Foundation），成功。
+
+**设备选择始终交给系统**：代码里不传设备 ID，Windows 用
+`GetDefaultAudioEndpoint(eCapture)`，插件用平台默认值。插拔麦克风由系统跟随，
+程序不做任何枚举或挑选。
+
+WASAPI 的所有调用都在**同一个采集线程**上完成。这不是整洁癖：窗口线程是 STA，
+在它上面拿到接口再交给别的线程使用，第一次可能凑巧能用，之后就静默采不到音频——
+连续录音坏掉正是这个原因。
 
 ## 结构与取舍
 
@@ -43,6 +71,7 @@ flutter test                  # 已验证：11 项通过
 lib/
   main.dart              主题 + 入口，NOTA_BASE 注入点
   api/nota_client.dart   唯一与后端协议耦合的地方（不含 dart:io，Web 可复用）
+  audio/note_recorder.dart NoteRecorder 接口 + 两个平台实现（见上一节）
   models/models.dart     与 JSON 一一对应的数据模型，不做业务判断
   pages/home_page.dart   录音 / 打字 / 最近记录 / 额度
   pages/detail_page.dart 摘要 + 待办 + 提醒 + Agent Trace + 审批卡片

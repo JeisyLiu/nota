@@ -1,6 +1,10 @@
 #include "flutter_window.h"
 
+#include <flutter/standard_method_codec.h>
+
 #include <optional>
+#include <string>
+#include <variant>
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -8,6 +12,69 @@ FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
 
 FlutterWindow::~FlutterWindow() {}
+
+void FlutterWindow::RegisterAudioChannel() {
+  audio_recorder_ = std::make_unique<AudioRecorder>();
+  audio_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "nota/audio",
+          &flutter::StandardMethodCodec::GetInstance());
+
+  audio_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        const std::string& method = call.method_name();
+
+        if (method == "start") {
+          std::string path;
+          if (const auto* args =
+                  std::get_if<flutter::EncodableMap>(call.arguments())) {
+            const auto it = args->find(flutter::EncodableValue("path"));
+            if (it != args->end()) {
+              if (const auto* value =
+                      std::get_if<std::string>(&it->second)) {
+                path = *value;
+              }
+            }
+          }
+          if (path.empty()) {
+            result->Error("bad_args", "start needs a path");
+            return;
+          }
+          std::string error;
+          if (audio_recorder_->Start(path, &error)) {
+            result->Success(flutter::EncodableValue(true));
+          } else {
+            result->Error("record_failed", error);
+          }
+          return;
+        }
+
+        if (method == "stop") {
+          std::string error;
+          if (audio_recorder_->Stop(&error)) {
+            result->Success(flutter::EncodableValue(true));
+          } else {
+            result->Error("record_failed", error);
+          }
+          return;
+        }
+
+        if (method == "cancel") {
+          audio_recorder_->Cancel();
+          result->Success();
+          return;
+        }
+
+        if (method == "isRecording") {
+          result->Success(flutter::EncodableValue(audio_recorder_->recording()));
+          return;
+        }
+
+        result->NotImplemented();
+      });
+}
 
 bool FlutterWindow::OnCreate() {
   if (!Win32Window::OnCreate()) {
@@ -25,6 +92,7 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  RegisterAudioChannel();
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -40,6 +108,13 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  // Never leave the microphone open after the window goes away.
+  if (audio_recorder_) {
+    audio_recorder_->Cancel();
+  }
+  audio_channel_.reset();
+  audio_recorder_.reset();
+
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

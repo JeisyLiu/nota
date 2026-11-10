@@ -1,0 +1,39 @@
+Record on Windows through WASAPI instead of the crashing plugin
+
+The record button could not work on Windows at all. Two platform layers were
+broken in different ways, and finding that out took three attempts.
+
+The `record` plugin's Windows backend goes through Media Foundation and takes an
+access violation (0xc0000005) inside MFPlat.DLL as soon as it opens the capture
+device. The Windows event log names nota_app.exe as the faulting process with
+MFPlat.DLL as the faulting module. A native crash cannot be caught from Dart, so
+the app died on the first press; from the outside that looked like a dead button.
+
+waveIn (MME) was the next attempt, since it is a separate layer. It opened the
+device and started cleanly but never delivered a single buffer for this USB
+microphone -- `waveInOpen` and `waveInStart` both returned success, no WOM_DONE
+callback ever fired, and every clip came back empty. Meanwhile `ffmpeg -f dshow`
+recorded the same device without trouble, so the hardware was never the problem.
+
+WASAPI is what actually works, and it is what Windows itself records through. It
+is not Media Foundation, and GetDefaultAudioEndpoint(eCapture) literally means
+"the system's default microphone", which is the decoupling we wanted: no device
+id is passed anywhere, nothing enumerates or picks a device, and plugging a
+microphone in is followed by the OS.
+
+The UI now depends on a NoteRecorder interface with one implementation per
+platform (record plugin for Android/iOS/web, native WASAPI for Windows), so the
+screen has no idea which mechanism it is talking to.
+
+Everything WASAPI-related runs on a single dedicated capture thread. That is a
+correctness requirement, not tidiness: the window thread is an STA, and handing
+an interface obtained there to another thread without marshalling happens to
+work once and then silently returns no audio. That is exactly how the first
+version behaved -- one good recording, then empty ones.
+
+Verified on the release build by driving real mouse events: pressing turns the
+button red and shows "recording", releasing produces a valid 16 kHz mono WAV
+(68 KB for a ~2 s clip), it uploads, and the transcript pipeline runs. Two
+consecutive recordings both produce files. Actual speech recognition still needs
+a human to speak; the room is silent here, so whisper correctly answers "no
+speech detected in the audio". Analyze clean, 11 tests pass.

@@ -50,6 +50,10 @@ python -m backend.main
 
 `/trace` 保留了原来的 Agent 轨迹页（三栏、可发消息、看每一步工具调用），截图和演示都能用。
 
+![管理员全局面板](docs/img/console-admin.png)
+
+![普通用户个人中心](docs/img/console-user.png)
+
 > 移动端 App 不走登录，仍用 `X-User-Id` 头；这是 MVP 的取舍，见 `docs/decisions.md` ADR-013。`/api/admin/*` 只认会话，请求头无法冒充管理员。
 
 ## 接真实模型

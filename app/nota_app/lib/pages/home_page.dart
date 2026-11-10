@@ -1,7 +1,8 @@
 import 'dart:async';
 
 import 'package:cross_file/cross_file.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:path_provider/path_provider.dart';
@@ -39,6 +40,10 @@ class _HomePageState extends State<HomePage> {
   /// Below this, the clip is a stray click rather than a sentence. Sending it
   /// would burn a quota unit and produce a whisper "no speech" failure.
   static const _minRecordMs = 700;
+
+  /// Extension of the clip currently being recorded, so the upload carries a
+  /// truthful filename.
+  String _recordExtension = 'm4a';
 
   @override
   void initState() {
@@ -111,40 +116,63 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _doStart() async {
-    // Everything here can fail on a desktop build with no usable input device,
-    // and an uncaught async error in a release build is invisible: the button
-    // just looks dead. So each step is caught and surfaced.
     try {
       if (!await _recorder.hasPermission()) {
+        _recordStartedAt = null;
         _toast('没有麦克风权限。Windows 上请在 设置 → 隐私 → 麦克风 里允许桌面应用访问。',
             error: true);
         return;
       }
-      // hasPermission() returns true on Windows even with no capture device at
-      // all, so check for one explicitly to give an accurate message instead of
-      // a vague "nothing was recorded" later.
-      if (!kIsWeb) {
-        try {
-          final devices = await _recorder
-              .listInputDevices()
-              .timeout(const Duration(milliseconds: 800));
-          if (devices.isEmpty) {
-            _recordStartedAt = null;
-            _toast('这台电脑没有可用麦克风（系统未检测到录音设备）。'
-                '可以先用下方输入框打字，效果完全一样。', error: true);
-            return;
-          }
-        } catch (_) {
-          // Listing is best-effort and can hang or fail with no device present;
-          // either way let start() try, and surface its error if it fails.
-        }
+
+      // Known-broken path: record_windows calls into Media Foundation and takes
+      // an access violation inside MFPlat.DLL when it opens the capture device on
+      // this Windows build (11 26100). It is a native crash, so nothing here can
+      // catch it -- the whole app dies. Refusing the attempt keeps the build
+      // usable for everything else; recording itself is verified working on
+      // Android and Web, which use different platform implementations.
+      // Flip with --dart-define=NOTA_WINDOWS_RECORDING=true once the plugin is
+      // replaced or fixed.
+      const allowWindowsRecording =
+          bool.fromEnvironment('NOTA_WINDOWS_RECORDING', defaultValue: false);
+      if (!kIsWeb &&
+          defaultTargetPlatform == TargetPlatform.windows &&
+          !allowWindowsRecording) {
+        _recordStartedAt = null;
+        _toast('Windows 桌面版的录音插件在当前系统上会崩溃，已暂时禁用。'
+            '手机版和网页版录音正常。', error: true);
+        return;
       }
-      // Web 上没有临时目录，record 会忽略 path 并返回一个 blob URL。
+
+      // Which microphone to use is the operating system's decision, not ours:
+      // no device id is passed, so the recorder takes the system default and
+      // follows it if the user plugs one in. Enumerating devices here would be
+      // exactly the coupling we do not want, and it also lied on this machine,
+      // which has endpoints but returned an empty list.
+
+      // The codec is chosen once, per platform, and never retried in-process:
+      // record_windows crashes natively if start() is called again after a
+      // failed start, which killed the app outright. WAV is the safe choice on
+      // Windows because the plugin writes the header itself instead of going
+      // through a Media Foundation encoder that may not be installed; mobile and
+      // web keep AAC, which is far smaller. The backend transcodes either way.
+      final isWindows = !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+      final encoder = isWindows ? AudioEncoder.wav : AudioEncoder.aacLc;
+      final extension = isWindows ? 'wav' : 'm4a';
+
+      // Web has no temp directory; record ignores path and returns a blob URL.
       final path = kIsWeb
           ? ''
           : '${(await getTemporaryDirectory()).path}/nota-'
-              '${DateTime.now().millisecondsSinceEpoch}.m4a';
-      await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
+              '${DateTime.now().millisecondsSinceEpoch}.$extension';
+      // Ask for the format the pipeline actually wants (16 kHz mono) instead of
+      // letting Media Foundation open the device at whatever it prefers. Whisper
+      // resamples to 16 kHz anyway, and a stereo 44.1 kHz default makes the
+      // device negotiate a format it may not support.
+      await _recorder.start(
+        RecordConfig(encoder: encoder, sampleRate: 16000, numChannels: 1),
+        path: path,
+      );
+      _recordExtension = extension;
       if (!mounted) return;
       setState(() {
         _recording = true;
@@ -153,6 +181,7 @@ class _HomePageState extends State<HomePage> {
       });
     } catch (e) {
       if (!mounted) return;
+      _recordStartedAt = null;
       setState(() {
         _recording = false;
         _status = null;
@@ -163,26 +192,27 @@ class _HomePageState extends State<HomePage> {
 
   /// Turn a raw recorder failure into advice the user can act on.
   ///
-  /// record_windows reports the bare Windows HRESULT text ("Element not found",
-  /// 0x80070490 and friends) when it cannot create a capture device, which reads
-  /// as a crash rather than as "there is no microphone here".
+  /// record_windows re-throws the bare Windows HRESULT text, which reads as a
+  /// crash rather than as an explanation. Only codes that genuinely mean "no
+  /// capture device" are interpreted; anything else keeps its original wording
+  /// so a real cause is never hidden behind a guess.
   String _recordErrorMessage(Object e) {
     final text = e.toString();
     if (e is PlatformException && e.code == 'Record') {
       final detail = e.message ?? '';
-      final noDevice = detail.isEmpty ||
-          text.contains('80070490') ||
+      // 0x80070490 ELEMENT_NOT_FOUND: no capture endpoint to open.
+      final noDevice = text.contains('80070490') ||
           text.contains('88890003') ||
           text.contains('Element not found') ||
-          text.contains('not found') ||
-          text.contains('找不到');
+          detail.contains('Element not found') ||
+          detail.contains('找不到元素');
       if (noDevice) {
-        return '这台电脑没有可用麦克风（系统未检测到录音设备）。'
-            '可以先用下方输入框打字，效果完全一样。';
+        return '系统没有找到可用的录音设备。'
+            '插入麦克风后重试，或先用下方输入框打字。';
       }
-      return '录音设备不可用：$detail';
+      return '无法开始录音：$detail';
     }
-    return '录音失败：$text';
+    return '无法开始录音：$text';
   }
 
   Future<void> _stopRecording() async {
@@ -246,7 +276,10 @@ class _HomePageState extends State<HomePage> {
         _status = '上传中…';
         _statusError = false;
       });
-      await _submit(() => widget.client.sendAudio(bytes, filename: 'note.m4a'));
+      await _submit(() => widget.client.sendAudio(
+            bytes,
+            filename: 'note.$_recordExtension',
+          ));
     } catch (e) {
       if (!mounted) return;
       setState(() {

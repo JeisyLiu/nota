@@ -13,10 +13,13 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, W
 from fastapi.responses import FileResponse, StreamingResponse
 
 from ..application.ingest_note import ingest_note
+from ..application import job_service
 from ..domain import jobs as jobstates
 from ..domain.quota import QuotaExceeded
 from ..infrastructure import repos
 from ..infrastructure.db import write_tx
+from .identity import resolve_user_id
+from .payloads import job_payload as _job_payload
 from .schemas import (
     AskIn, AskOut, DecisionIn, DeviceCommandIn, HealthOut, JobOut, NoteIn, NoteOut,
     PendingActionOut, QuotaOut, ReminderOut, StepOut, TodoOut,
@@ -31,8 +34,14 @@ def _container(request: Request):
 
 
 def _user(request: Request, x_user: str | None = None) -> str:
-    """No auth in the MVP: a header picks the demo user. Documented in README."""
-    return (x_user or request.headers.get("X-User-Id") or "demo").strip() or "demo"
+    """Identity for customer endpoints.
+
+    A logged-in console session wins; otherwise the mobile client's ``X-User-Id``
+    header is used (documented MVP trade-off, see docs/decisions.md ADR-013).
+    """
+    if x_user:
+        return x_user.strip() or "demo"
+    return resolve_user_id(request)
 
 
 # --------------------------------------------------------------------------- health
@@ -136,23 +145,7 @@ async def create_audio_note(
 
 
 # --------------------------------------------------------------------------- jobs
-def _job_payload(conn, job) -> dict:
-    summary = repos.get_summary(conn, job["note_id"])
-    todos = [dict(r) for r in conn.execute(
-        "SELECT * FROM todos WHERE note_id = ? ORDER BY created_at", (job["note_id"],)).fetchall()]
-    reminders = [dict(r) for r in conn.execute(
-        "SELECT * FROM reminders WHERE note_id = ? ORDER BY fire_at", (job["note_id"],)).fetchall()]
-    return {
-        "job_id": job["id"],
-        "note_id": job["note_id"],
-        "state": job["state"],
-        "summary": summary["summary_md"] if summary else None,
-        "title": summary["title"] if summary else None,
-        "todos": todos,
-        "reminders": reminders,
-        "attempts": job["attempts"],
-        "error": job["last_error"],
-    }
+# The serializer lives in payloads.py so the console returns the same shape.
 
 
 @router.get("/api/notes/{note_id}/job", response_model=JobOut)
@@ -186,41 +179,22 @@ def get_job(request: Request, job_id: str):
 def cancel_job(request: Request, job_id: str):
     """Stop a queued or running job and return the reserved request.
 
-    Cancelling is a user action, not a failure: the state is ``cancelled`` (no
-    retry, no error message) and the quota unit goes back. The worker checks for
-    this state between phases so it stops paying for work nobody wants.
+    The rules live in ``application/job_service.py`` so the admin console cannot
+    drift from the app: cancelling is a user action, not a failure -- state
+    ``cancelled``, no retry, reserved request returned.
     """
     c = _container(request)
     user_id = _user(request)
+    try:
+        changed, job = job_service.cancel(c, job_id, owner_user_id=user_id)
+    except job_service.JobNotFound as exc:
+        raise HTTPException(status_code=404, detail={"error": "job_not_found"}) from exc
+    except job_service.JobConflict as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc),
+                                                     "state": exc.state}) from exc
     with c.db.session() as conn:
-        job = repos.get_job(conn, job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail={"error": "job_not_found"})
-        if job["user_id"] != user_id:
-            raise HTTPException(status_code=404, detail={"error": "job_not_found"})
-
-        already = job["state"] in jobstates.TERMINAL
-        if not already:
-            try:
-                jobstates.assert_transition(job["state"], jobstates.CANCELLED)
-            except jobstates.InvalidTransition as exc:
-                raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
-            with write_tx(conn):
-                # Conditional: the worker may have advanced the state while we
-                # were validating, and whoever committed last must not win blindly.
-                applied = repos.set_job_state_if(
-                    conn, job_id, job["state"], jobstates.CANCELLED, clock=c.clock
-                )
-            already = not applied
-
-    if not already:
-        # Outside the write transaction: it opens its own session.
-        c.quota.refund(user_id, job_id)
-
-    with c.db.session() as conn:
-        job = repos.get_job(conn, job_id)
         payload = _job_payload(conn, job)
-    return {"cancelled": not already, "job": payload}
+    return {"cancelled": changed, "job": payload}
 
 
 @router.get("/api/jobs/{job_id}/steps", response_model=list[StepOut])
@@ -607,17 +581,55 @@ async def device_socket(websocket: WebSocket):
 
 
 # --------------------------------------------------------------------------- static
+_WEB_DIR = "web"
+
+# Only these names may be served from web/js. Anything else 404s, so a crafted
+# path cannot walk out of the directory.
+_JS_FILES = frozenset({
+    "api.js", "auth.js", "router.js", "charts.js", "user.js", "admin.js",
+})
+
+
+def _web_file(request: Request, name: str) -> Path:
+    return Path(_container(request).settings.root) / _WEB_DIR / name
+
+
 @router.get("/", include_in_schema=False)
 def index(request: Request):
-    web = Path(_container(request).settings.root) / "web" / "index.html"
-    return FileResponse(web)
+    """Login screen. The console itself lives at /console."""
+    return FileResponse(_web_file(request, "index.html"))
+
+
+@router.get("/login", include_in_schema=False)
+def login_page(request: Request):
+    return FileResponse(_web_file(request, "index.html"))
+
+
+@router.get("/console", include_in_schema=False)
+def console_page(request: Request):
+    return FileResponse(_web_file(request, "console.html"))
+
+
+@router.get("/trace", include_in_schema=False)
+def trace_page(request: Request):
+    """The original agent console, kept for the demo/evidence path."""
+    return FileResponse(_web_file(request, "trace.html"))
 
 
 @router.get("/app.css", include_in_schema=False)
 def app_css(request: Request):
-    return FileResponse(Path(_container(request).settings.root) / "web" / "app.css")
+    return FileResponse(_web_file(request, "app.css"))
+
+
+@router.get("/js/{name}", include_in_schema=False)
+def web_module(request: Request, name: str):
+    if name not in _JS_FILES:
+        raise HTTPException(status_code=404, detail={"error": "not_found"})
+    return FileResponse(_web_file(request, f"js/{name}"),
+                        media_type="text/javascript; charset=utf-8")
 
 
 @router.get("/app.js", include_in_schema=False)
 def app_js(request: Request):
-    return FileResponse(Path(_container(request).settings.root) / "web" / "app.js")
+    # Still used by the trace page.
+    return FileResponse(_web_file(request, "app.js"))

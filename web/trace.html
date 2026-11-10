@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nota — Agent 轨迹</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="dot"></span>
+    <strong>Nota</strong>
+    <span class="tag" id="mode-tag">demo</span>
+  </div>
+  <div class="quota" id="quota">
+    <span class="quota-label">今日额度</span>
+    <div class="quota-bar"><i id="quota-fill"></i></div>
+    <span class="quota-text" id="quota-text">— / —</span>
+  </div>
+  <div class="user">
+    <label for="user-input">用户</label>
+    <input id="user-input" value="demo" autocomplete="off" spellcheck="false" />
+  </div>
+  <div class="user">
+    <a class="tag" href="/console">管理台</a>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- ---------------- column 1: capture ---------------- -->
+  <section class="col capture">
+    <h2>说一句</h2>
+    <div class="recorder">
+      <button id="btn-record" class="mic" aria-label="录音">
+        <span class="mic-icon">●</span>
+        <span id="mic-label">按住说话</span>
+      </button>
+      <div class="rec-status" id="rec-status">或者直接在下面打字</div>
+    </div>
+
+    <textarea id="text-input" rows="3"
+      placeholder="例如：明天下午三点提醒我给张总发报价单"></textarea>
+
+    <div class="capture-actions">
+      <button id="btn-send" class="primary">发送</button>
+      <button id="btn-sample" class="ghost">用示例</button>
+    </div>
+
+    <details class="harness-note">
+      <summary>Harness 会怎么处理这句话</summary>
+      <ol>
+        <li>落库 + 用幂等键预占 1 次额度（同一个请求重复提交不重复扣）</li>
+        <li>语音转文字（faster-whisper，本地 CPU）</li>
+        <li>Agent 循环：think → tool_call → observe，最多 6 轮</li>
+        <li>每个工具调用写进 trace；不可逆操作挂起等待确认</li>
+        <li>失败按 1s/4s/15s 退避重试，最终失败自动退回额度</li>
+      </ol>
+    </details>
+
+    <h3 class="sub">最近</h3>
+    <ul class="notes" id="notes"></ul>
+  </section>
+
+  <!-- ---------------- column 2: result ---------------- -->
+  <section class="col result">
+    <h2>整理结果</h2>
+    <div id="result-empty" class="empty">
+      还没有结果。说一句话试试。
+    </div>
+
+    <div id="result" class="hidden">
+      <div class="state-row">
+        <span class="state" id="job-state">queued</span>
+        <span class="job-id" id="job-id"></span>
+        <button id="btn-stop" class="stop hidden" title="停止后本次额度会退回">停止</button>
+      </div>
+
+      <h3 id="summary-title" class="summary-title"></h3>
+      <div id="summary-body" class="summary-body"></div>
+
+      <div id="approvals" class="approvals hidden">
+        <h3>需要你确认</h3>
+        <ul id="approval-list"></ul>
+      </div>
+
+      <div class="grid2">
+        <div>
+          <h3>待办</h3>
+          <ul id="todos" class="todos"></ul>
+        </div>
+        <div>
+          <h3>提醒</h3>
+          <ul id="reminders" class="reminders"></ul>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="sub">问历史</h3>
+    <div class="ask">
+      <input id="ask-input" placeholder="上次给张总的报价是多少？" />
+      <button id="btn-ask" class="primary small">问</button>
+    </div>
+    <div id="ask-answer" class="answer hidden"></div>
+  </section>
+
+  <!-- ---------------- column 3: trace ---------------- -->
+  <section class="col trace">
+    <h2>Agent Trace</h2>
+    <div class="trace-meta" id="trace-meta">每次运行都会落库，刷新页面也还在</div>
+    <ol class="steps" id="steps"></ol>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

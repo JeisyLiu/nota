@@ -35,6 +35,80 @@ def set_plan(conn: sqlite3.Connection, user_id: str, plan: str) -> None:
     conn.execute("UPDATE users SET plan = ? WHERE id = ?", (plan, user_id))
 
 
+# --------------------------------------------------------------- back-office users
+def get_user_by_username(conn: sqlite3.Connection, username: str) -> sqlite3.Row | None:
+    if not username:
+        return None
+    return conn.execute(
+        "SELECT * FROM users WHERE username = ?", (username,)
+    ).fetchone()
+
+
+def insert_account(conn: sqlite3.Connection, *, user_id: str, username: str,
+                   password_hash: str, display_name: str, role: str = "user",
+                   plan: str = "free", email: str | None = None,
+                   tz: str = "Asia/Shanghai", clock: Clock | None = None) -> str:
+    """Creates a login-capable account. Used by the demo seed."""
+    conn.execute(
+        "INSERT INTO users(id, email, plan, tz, created_at, username, role, "
+        "display_name, password_hash) VALUES (?,?,?,?,?,?,?,?,?)",
+        (user_id, email or f"{username}@nota.local", plan, tz,
+         (clock or Clock()).now_iso(), username, role, display_name, password_hash),
+    )
+    return user_id
+
+
+def set_password_hash(conn: sqlite3.Connection, user_id: str, password_hash: str) -> None:
+    conn.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id)
+    )
+
+
+def list_accounts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Accounts that can log in, admins first."""
+    return conn.execute(
+        "SELECT * FROM users WHERE username IS NOT NULL "
+        "ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, username"
+    ).fetchall()
+
+
+def list_users(conn: sqlite3.Connection, *, q: str | None = None,
+               limit: int = 50, offset: int = 0) -> list[sqlite3.Row]:
+    sql = "SELECT * FROM users"
+    params: list[Any] = []
+    if q:
+        sql += " WHERE (username LIKE ? OR display_name LIKE ? OR id LIKE ? OR email LIKE ?)"
+        like = f"%{q}%"
+        params.extend([like, like, like, like])
+    sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    return conn.execute(sql, params).fetchall()
+
+
+def count_users(conn: sqlite3.Connection, *, q: str | None = None) -> int:
+    """Counts accounts the console manages, i.e. those that can log in.
+
+    Legacy ids created before login existed (``demo``, ``warmup``) have no
+    username and are not listed, so they must not be counted either -- otherwise
+    the header says "8 accounts" above a table of six.
+    """
+    sql = "SELECT COUNT(*) AS n FROM users WHERE username IS NOT NULL"
+    params: list[Any] = []
+    if q:
+        sql += " AND (username LIKE ? OR display_name LIKE ? OR id LIKE ? OR email LIKE ?)"
+        like = f"%{q}%"
+        params.extend([like, like, like, like])
+    row = conn.execute(sql, params).fetchone()
+    return int(row["n"]) if row else 0
+
+
+def count_admins(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM users WHERE role = 'admin'"
+    ).fetchone()
+    return int(row["n"]) if row else 0
+
+
 # --------------------------------------------------------------------------- devices
 def upsert_device(conn: sqlite3.Connection, machine_code: str, *, model: str = "nota-esp32",
                   fw_version: str = "0.1.0", clock: Clock | None = None) -> sqlite3.Row:

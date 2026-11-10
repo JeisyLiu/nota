@@ -22,6 +22,7 @@ def client(tmp_path):
         stt_provider="noop",
         free_daily_limit=10,
         retry_backoff_seconds=(0, 0),
+        seed_demo_users=False,
     )
     settings.ensure_dirs()
     app = create_app(settings, start_worker=False)

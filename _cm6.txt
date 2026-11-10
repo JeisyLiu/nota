@@ -1,0 +1,52 @@
+Turn the web surface into a proper back office with logins
+
+The web page was an agent demo: anyone could open it, identity came from an
+X-User-Id header, and it showed one person's notes. What the deliverable needs is
+a management console with accounts, roles and reporting, so that is what / now is.
+The old three-column trace page moved to /trace and still works, because it is
+the clearest evidence that the agent really runs.
+
+Accounts and sessions
+  - users gained username/role/display_name/password_hash/last_login_at, added in
+    place through Database._ensure_columns: CREATE TABLE IF NOT EXISTS does nothing
+    to an existing table, and recreating it would drop real notes.
+  - passwords are PBKDF2-HMAC-SHA256, 200k iterations, per-user salt; sessions are
+    random tokens whose SHA-256 is what the database stores, handed to the browser
+    as an HttpOnly cookie.
+  - seed.py creates one admin plus five users and backfills a fortnight of
+    activity so the dashboards are not empty. It is idempotent, and seeded jobs are
+    terminal only -- a queued row would be picked up by the worker and actually
+    spend tokens.
+
+Two identities, on purpose
+  - customer endpoints (/api/notes, /api/jobs, ...) accept a session, then fall back
+    to X-User-Id. The Flutter app has no login screen and must keep working.
+  - /api/admin/* accepts a session with role=admin and nothing else, so a header
+    cannot impersonate an administrator. Covered by tests/test_auth.py.
+
+Reporting
+  - personal: today's balance, 14-day usage, call history, success rate, todos,
+    tokens, latency, password change (which revokes other sessions).
+  - global: account/record/job totals, success rate, token spend, latency, pending
+    approvals, per-day series, job-state donut, top tools, per-user table.
+  - aggregates live in infrastructure/queries.py, apart from repos: that module
+    owns single rows, this one owns reporting.
+
+Front end stays build-free (ADR-008): index.html (login), console.html (shell with
+hash routing), trace.html (the old page), and native ES modules under web/js --
+api/auth/router/charts/user/admin. Charts are hand-drawn inline SVG, so there is no
+charting dependency and no bundler.
+
+Also fixed while here:
+  - job cancel/retry moved into application/job_service.py so the app and the admin
+    console share one implementation (previously only the app had it);
+  - count_users now counts only accounts that can log in, so the header no longer
+    says eight above a table of six;
+  - seeded/admin accounts cannot have their plan edited, which keeps the console
+    from locking itself out.
+
+Verified end to end in headless Chrome over CDP: login as admin lands on the global
+panel, user/job/approval pages render, a normal user sees only three nav items and
+their own numbers, and no JS errors are logged. 85 backend tests pass, the eval is
+still green, and scripts/verify.ps1 gained login/role/traversal checks and still
+passes.

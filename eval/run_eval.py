@@ -70,6 +70,7 @@ def _build(dataset: dict, provider: str, tmp: Path) -> AppContainer:
         stt_provider="noop",
         retry_backoff_seconds=(0,),
         free_daily_limit=10_000,
+        seed_demo_users=False,
     )
     if provider != "scripted":
         problems = settings.llm_problems()

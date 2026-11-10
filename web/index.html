@@ -3,112 +3,49 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Nota — 随口说，剩下的我来</title>
+<title>Nota 管理台 · 登录</title>
+<link rel="icon" href="data:," />
 <link rel="stylesheet" href="/app.css" />
 </head>
-<body>
-<header class="topbar">
-  <div class="brand">
-    <span class="dot"></span>
-    <strong>Nota</strong>
-    <span class="tag" id="mode-tag">demo</span>
-  </div>
-  <div class="quota" id="quota">
-    <span class="quota-label">今日额度</span>
-    <div class="quota-bar"><i id="quota-fill"></i></div>
-    <span class="quota-text" id="quota-text">— / —</span>
-  </div>
-  <div class="user">
-    <label for="user-input">用户</label>
-    <input id="user-input" value="demo" autocomplete="off" spellcheck="false" />
-  </div>
-</header>
-
-<main class="layout">
-  <!-- ---------------- column 1: capture ---------------- -->
-  <section class="col capture">
-    <h2>说一句</h2>
-    <div class="recorder">
-      <button id="btn-record" class="mic" aria-label="录音">
-        <span class="mic-icon">●</span>
-        <span id="mic-label">按住说话</span>
-      </button>
-      <div class="rec-status" id="rec-status">或者直接在下面打字</div>
+<body class="login-body">
+<main class="login-wrap">
+  <section class="login-card">
+    <div class="brand brand-lg">
+      <span class="dot"></span>
+      <strong>Nota</strong>
+      <span class="tag">管理台</span>
     </div>
+    <p class="login-sub">登录后查看个人用量，管理员可进入全局面板。</p>
 
-    <textarea id="text-input" rows="3"
-      placeholder="例如：明天下午三点提醒我给张总发报价单"></textarea>
+    <form id="login-form" class="login-form" autocomplete="on">
+      <label for="username">用户名</label>
+      <input id="username" name="username" autocomplete="username" required autofocus />
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required />
+      <p id="login-error" class="form-error" role="alert"></p>
+      <button type="submit" class="primary wide">登录</button>
+    </form>
 
-    <div class="capture-actions">
-      <button id="btn-send" class="primary">发送</button>
-      <button id="btn-sample" class="ghost">用示例</button>
-    </div>
-
-    <details class="harness-note">
-      <summary>Harness 会怎么处理这句话</summary>
-      <ol>
-        <li>落库 + 用幂等键预占 1 次额度（同一个请求重复提交不重复扣）</li>
-        <li>语音转文字（faster-whisper，本地 CPU）</li>
-        <li>Agent 循环：think → tool_call → observe，最多 6 轮</li>
-        <li>每个工具调用写进 trace；不可逆操作挂起等待确认</li>
-        <li>失败按 1s/4s/15s 退避重试，最终失败自动退回额度</li>
-      </ol>
-    </details>
-
-    <h3 class="sub">最近</h3>
-    <ul class="notes" id="notes"></ul>
-  </section>
-
-  <!-- ---------------- column 2: result ---------------- -->
-  <section class="col result">
-    <h2>整理结果</h2>
-    <div id="result-empty" class="empty">
-      还没有结果。说一句话试试。
-    </div>
-
-    <div id="result" class="hidden">
-      <div class="state-row">
-        <span class="state" id="job-state">queued</span>
-        <span class="job-id" id="job-id"></span>
-        <button id="btn-stop" class="stop hidden" title="停止后本次额度会退回">停止</button>
+    <div class="demo-box">
+      <div class="demo-title">演示账号（点一下自动填入）</div>
+      <div class="demo-chips">
+        <button type="button" class="chip" data-demo-user="admin" data-demo-pass="123456">
+          admin · 管理员
+        </button>
+        <button type="button" class="chip" data-demo-user="zhangwei">zhangwei · 张伟</button>
+        <button type="button" class="chip" data-demo-user="lina">lina · 李娜</button>
+        <button type="button" class="chip" data-demo-user="wangfang">wangfang · 王芳</button>
+        <button type="button" class="chip" data-demo-user="liuyang">liuyang · 刘洋</button>
+        <button type="button" class="chip" data-demo-user="chenjing">chenjing · 陈静</button>
       </div>
-
-      <h3 id="summary-title" class="summary-title"></h3>
-      <div id="summary-body" class="summary-body"></div>
-
-      <div id="approvals" class="approvals hidden">
-        <h3>需要你确认</h3>
-        <ul id="approval-list"></ul>
-      </div>
-
-      <div class="grid2">
-        <div>
-          <h3>待办</h3>
-          <ul id="todos" class="todos"></ul>
-        </div>
-        <div>
-          <h3>提醒</h3>
-          <ul id="reminders" class="reminders"></ul>
-        </div>
-      </div>
+      <p class="demo-hint">密码统一为 <code>123456</code>。</p>
     </div>
-
-    <h3 class="sub">问历史</h3>
-    <div class="ask">
-      <input id="ask-input" placeholder="上次给张总的报价是多少？" />
-      <button id="btn-ask" class="primary small">问</button>
-    </div>
-    <div id="ask-answer" class="answer hidden"></div>
-  </section>
-
-  <!-- ---------------- column 3: trace ---------------- -->
-  <section class="col trace">
-    <h2>Agent Trace</h2>
-    <div class="trace-meta" id="trace-meta">每次运行都会落库，刷新页面也还在</div>
-    <ol class="steps" id="steps"></ol>
   </section>
 </main>
-
-<script src="/app.js"></script>
+<script type="module">
+  import { initLoginForm, initDemoFill } from "/js/auth.js";
+  initLoginForm();
+  initDemoFill();
+</script>
 </body>
 </html>

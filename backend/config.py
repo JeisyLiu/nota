@@ -81,6 +81,9 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 8787
     prompt_version: str = "v3"
+    # Seed one admin and five demo users (plus a fortnight of activity) so the
+    # console has something to show. Tests and the eval suite switch this off.
+    seed_demo_users: bool = True
 
     # Tool calls that cannot be undone are parked here and need a human "yes".
     approval_timeout_seconds: int = 600
@@ -213,6 +216,7 @@ def load_settings(root: Path | None = None, *, load_env: bool = True) -> Setting
         host=_env("HOST", "127.0.0.1"),
         port=_env_int("PORT", 8787),
         prompt_version=_env("PROMPT_VERSION", "v3"),
+        seed_demo_users=_env_bool("SEED_DEMO_USERS", True),
         approval_timeout_seconds=_env_int("APPROVAL_TIMEOUT_SECONDS", 600),
         max_agent_turns=_env_int("MAX_AGENT_TURNS", 6),
         job_max_attempts=_env_int("JOB_MAX_ATTEMPTS", 3),

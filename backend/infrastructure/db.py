@@ -40,6 +40,31 @@ class Database:
         sql = SCHEMA_FILE.read_text(encoding="utf-8")
         with self.session() as conn:
             conn.executescript(sql)
+            self._ensure_columns(conn)
+
+    @staticmethod
+    def _ensure_columns(conn: sqlite3.Connection) -> None:
+        """Add columns that were introduced after the first release.
+
+        ``CREATE TABLE IF NOT EXISTS`` does nothing to an existing table, so a
+        database created by an earlier version would silently lack the login
+        columns. Adding them in place keeps the user's notes and jobs.
+        """
+        wanted = {
+            "username": "TEXT",
+            "role": "TEXT NOT NULL DEFAULT 'user'",
+            "display_name": "TEXT",
+            "password_hash": "TEXT",
+            "last_login_at": "TEXT",
+        }
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+        for name, ddl in wanted.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {name} {ddl}")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username "
+            "ON users(username) WHERE username IS NOT NULL"
+        )
 
     def reset(self) -> None:
         """Test helper: drop everything and recreate."""

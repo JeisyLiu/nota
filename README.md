@@ -29,6 +29,29 @@ python -m backend.main
 
 首次启动会自动建库、建表。**默认是 demo 模式**：用确定性本地规划器跑通「录音 → 转写 → Agent 工具调用 → 结果」整条链路，不联网、不花钱、可重复。
 
+## 后台管理台（登录入口）
+
+打开 `http://127.0.0.1:8787` 就是登录页，首次启动会自动创建 6 个账号：
+
+| 用户名 | 密码 | 角色 | 套餐 |
+|---|---|---|---|
+| `admin` | `123456` | 管理员 | Pro |
+| `zhangwei` | `123456` | 用户 | Free |
+| `lina` | `123456` | 用户 | Pro |
+| `wangfang` | `123456` | 用户 | Free |
+| `liuyang` | `123456` | 用户 | Free |
+| `chenjing` | `123456` | 用户 | Pro |
+
+密码只是演示用的固定值，存在 `users.password_hash`（PBKDF2-HMAC-SHA256，20 万次迭代 + 每个账号独立盐），会话存 `sessions` 表、浏览器只拿到 HttpOnly Cookie。
+
+**普通用户**登录后看到：今日剩余额度、近 14 天用量曲线、调用记录（时间/来源/内容/状态/错误）、个人信息与改密码。
+
+**管理员**登录后额外看到：全局概览（账号数、记录数、成功率、Token、平均延迟、待审批、14 天趋势、任务状态环形图、工具调用 Top）、用户管理（搜索、改套餐、单用户详情）、任务管理（按状态筛选、取消、重试）、记录管理、待审批列表。
+
+`/trace` 保留了原来的 Agent 轨迹页（三栏、可发消息、看每一步工具调用），截图和演示都能用。
+
+> 移动端 App 不走登录，仍用 `X-User-Id` 头；这是 MVP 的取舍，见 `docs/decisions.md` ADR-013。`/api/admin/*` 只认会话，请求头无法冒充管理员。
+
 ## 接真实模型
 
 ```powershell
@@ -92,8 +115,8 @@ python -m scripts.check_llm    # ← 先自检，再启动
 ## 验证
 
 ```powershell
-.\scripts\verify.ps1     # 起服务 + 打 8 组端到端断言，全绿才算过
-python -m pytest tests   # 53 项
+.\scripts\verify.ps1     # 起服务 + 打 9 组端到端断言（含后台登录与权限），全绿才算过
+python -m pytest tests   # 85 项
 python -m eval.run_eval  # 15 条标注语料 + 5 条历史问答
 ```
 
@@ -137,10 +160,14 @@ curl.exe -H "X-User-Id: demo" http://127.0.0.1:8787/api/quota
 ```
 backend/
   domain/          纯逻辑：额度规则、任务状态机、时间解析、记忆排序（无 I/O）
-  application/     用例：ingest、pipeline、agent_harness、tools、ask、quota
-  infrastructure/  SQLite、LLM provider、STT、schema
-  interfaces/      FastAPI 路由、SSE、WebSocket、静态页
-web/               三栏单页（无构建步骤）
+  application/     用例：ingest、pipeline、agent_harness、tools、ask、quota、auth
+  infrastructure/  SQLite、LLM provider、STT、schema、报表查询、演示数据
+  interfaces/      FastAPI 路由（客户 API + 后台 API）、SSE、WebSocket、静态页
+web/
+  index.html       登录页
+  console.html     后台外壳（侧边栏 + 哈希路由）
+  trace.html       旧的 Agent 轨迹页（/trace）
+  js/              api / auth / router / charts / user / admin（原生 ES module）
 app/nota_app/      Flutter 客户端
 device/            ESP32 固件 + Wokwi 工程 + 虚拟设备
 eval/              评估集与打分器

@@ -9,6 +9,18 @@ CREATE TABLE IF NOT EXISTS users (
     created_at  TEXT NOT NULL
 );
 
+-- Back-office accounts. Added after the first release, so existing databases get
+-- these columns through Database._ensure_columns() rather than by recreating the
+-- table (which would drop the user's notes).
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash   TEXT PRIMARY KEY,   -- sha256 of the cookie value; never the token
+    user_id      TEXT NOT NULL REFERENCES users(id),
+    created_at   TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    last_seen_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_sessions_user ON sessions(user_id);
+
 CREATE TABLE IF NOT EXISTS devices (
     id           TEXT PRIMARY KEY,
     machine_code TEXT NOT NULL UNIQUE,

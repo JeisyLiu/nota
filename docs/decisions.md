@@ -207,3 +207,24 @@
 **代价**：prompt 变长（v3 约 1.9k 字符），每次调用多花 token。实测 15 条用例的输入 token 从约 2.4k 涨到约 2.9k，换 F1 从 0.778 到 1.000，值。
 
 **没有做的事**：没有为了提分去改评估判据的宽松度（q05 的「诚实说没记录」是放宽判据，但那是**修正判据错误**——原判据要求必须引用，等于奖励编造）。
+
+---
+
+## ADR-013 后台管理台：会话 Cookie，移动端保留 `X-User-Id`
+
+**背景**：原先的网页是三栏 Agent 演示页，谁都能打开，身份靠 `X-User-Id` 请求头。要交的是"管理员/用户登录的后台"，就需要真正的账号和角色。
+
+**决定**
+1. `users` 增 `username / role / display_name / password_hash / last_login_at`，用 `Database._ensure_columns()` 做**就地 ALTER**。`CREATE TABLE IF NOT EXISTS` 对已有表无效，重建会丢用户数据。
+2. 密码 PBKDF2-HMAC-SHA256，20 万次迭代，每账号独立盐，单列存 `pbkdf2_sha256$iter$salt$hash`，比对用 `hmac.compare_digest`。
+3. 会话存 `sessions` 表：浏览器拿到随机 token（HttpOnly Cookie），**库里只存其 SHA-256**。数据库泄露也不能直接复用。
+4. 身份解析分两档：
+   - 客户接口（`/api/notes` 等）：会话优先，没有会话再看 `X-User-Id`；
+   - 管理接口（`/api/admin/*`）：**只认会话 + `role=admin`**，请求头无法冒充。
+5. 演示数据：`seed.py` 幂等创建 1 个管理员 + 5 个用户，并铺 14 天历史（记录/任务/账本/trace）。历史任务只写终态，绝不写 `queued` —— 否则 worker 会捡起来真的调模型。
+
+**为什么保留 `X-User-Id`**：Flutter App 没有登录界面，改造成本与本轮目标无关；留着它，App 一行不用改。代价是"客户接口的身份不可信"，这一点在 README 与代码注释里都写明了，管理端彻底不受影响。
+
+**为什么会话存库而不是内存**：重启后登录态不丢，且能实现"改密码 → 其它设备下线"（`revoke_all_for_user`，保留当前会话）。
+
+**代价**：多两张表、一次 `ALTER`、一次 PBKDF2 计算（登录约 60ms）。换来的是角色隔离和一个看起来像产品的后台。

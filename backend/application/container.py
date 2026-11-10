@@ -53,6 +53,8 @@ class AppContainer:
         container = cls(settings=settings, db=db, clock=clock, quota=quota, memory=memory,
                         registry=registry, harness=harness, stt=stt, model=model,
                         pipeline=pipeline)
+        if getattr(settings, "seed_demo_users", False):
+            _seed_accounts(db, clock)
         if start_worker:
             pipeline.start()
         _preload_stream_model(settings, stt)
@@ -72,6 +74,24 @@ class AppContainer:
                              self.pipeline):
             if hasattr(collaborator, "_clock"):
                 collaborator._clock = clock
+
+
+def _seed_accounts(db: Database, clock: Clock) -> None:
+    """Create the demo accounts. Idempotent, and never fatal.
+
+    A failure here must not stop the service: the console would simply have no
+    accounts, which is a much better outcome than refusing to boot.
+    """
+    try:
+        from ..infrastructure.seed import seed_demo_users
+
+        with db.session() as conn:
+            result = seed_demo_users(conn, clock)
+        if result["accounts_created"]:
+            log.info("seeded %s demo accounts (%s notes)",
+                     result["accounts_created"], result["notes_created"])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("seeding demo accounts failed: %s", exc)
 
 
 def _preload_stream_model(settings, stt) -> None:

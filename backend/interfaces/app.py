@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from ..application.container import AppContainer
 from ..config import load_settings
 from .api import router
+from .console_api import router as console_router
 
 
 @asynccontextmanager
@@ -29,4 +30,5 @@ def create_app(settings=None, *, start_worker: bool = True) -> FastAPI:
     app.state.loop = None
     app.state.auto_run = start_worker
     app.include_router(router)
+    app.include_router(console_router)
     return app

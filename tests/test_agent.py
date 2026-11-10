@@ -68,7 +68,7 @@ from backend.interfaces.app import create_app  # noqa: E402
 def client(tmp_path):
     settings = Settings(root=tmp_path, db_path=tmp_path / "a.db", data_dir=tmp_path / "d",
                         llm_provider="scripted", stt_provider="noop",
-                        retry_backoff_seconds=(0,))
+                        retry_backoff_seconds=(0,), seed_demo_users=False)
     settings.ensure_dirs()
     with TestClient(create_app(settings, start_worker=False)) as c:
         # Pin now so relative dates ("明天下午三点") stay deterministic.

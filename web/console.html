@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nota 管理台</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body class="console-body">
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="dot"></span>
+      <strong>Nota</strong>
+    </div>
+    <div class="who" id="who">
+      <div class="who-name" id="who-name">…</div>
+      <div class="who-meta" id="who-meta"></div>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="sidebar-foot">
+      <a class="nav-item subtle" href="/trace">Agent 轨迹（旧）</a>
+      <button id="logout" class="ghost wide" type="button">退出登录</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="page-head">
+      <h1 id="page-title">概览</h1>
+      <div class="page-meta" id="page-meta"></div>
+    </header>
+    <div id="view" class="view"></div>
+  </main>
+</div>
+
+<script type="module">
+  import { currentUser, logout } from "/js/auth.js";
+  import { createRouter } from "/js/router.js";
+  import { renderOverview, renderUsage, renderProfile } from "/js/user.js";
+  import {
+    renderAdminOverview, renderAdminUsers, renderAdminUserDetail,
+    renderAdminJobs, renderAdminNotes, renderAdminApprovals,
+  } from "/js/admin.js";
+
+  const user = await currentUser();
+
+  document.getElementById("who-name").textContent = user.display_name || user.username;
+  document.getElementById("who-meta").textContent =
+    `${user.username} · ${user.role === "admin" ? "管理员" : "用户"} · ${user.plan === "pro" ? "Pro" : "Free"}`;
+  document.getElementById("page-meta").textContent = user.role === "admin"
+    ? "全局视角" : "我的数据";
+
+  document.getElementById("logout").addEventListener("click", logout);
+
+  const routes = [
+    { path: "/overview", label: "概览", render: renderOverview },
+    { path: "/usage", label: "调用记录", render: renderUsage },
+    { path: "/profile", label: "个人信息", render: renderProfile },
+    { path: "/admin", label: "全局概览", admin: true, render: renderAdminOverview },
+    { path: "/admin/users", label: "用户管理", admin: true, render: renderAdminUsers },
+    { path: "/admin/jobs", label: "任务管理", admin: true, render: renderAdminJobs },
+    { path: "/admin/notes", label: "记录管理", admin: true, render: renderAdminNotes },
+    { path: "/admin/approvals", label: "待审批", admin: true, render: renderAdminApprovals },
+  ];
+
+  createRouter({
+    routes,
+    view: document.getElementById("view"),
+    title: document.getElementById("page-title"),
+    nav: document.getElementById("nav"),
+    user,
+    home: user.role === "admin" ? "/admin" : "/overview",
+  });
+</script>
+</body>
+</html>

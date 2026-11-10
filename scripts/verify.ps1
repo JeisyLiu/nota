@@ -78,9 +78,47 @@ try {
     Write-Host "[2] static web page" -ForegroundColor Cyan
     $index = Invoke-WebRequest -Uri "$base/" -TimeoutSec 5 -UseBasicParsing
     Check "GET / -> 200" ($index.StatusCode -eq 200) $index.StatusCode
-    Check "page contains the result column" ($index.Content -match "整理结果") ""
-    $js = Invoke-WebRequest -Uri "$base/app.js" -TimeoutSec 5 -UseBasicParsing
-    Check "GET /app.js -> 200" ($js.StatusCode -eq 200) $js.StatusCode
+    Check "login page has the form" ($index.Content -match "login-form") ""
+    $console = Invoke-WebRequest -Uri "$base/console" -TimeoutSec 5 -UseBasicParsing
+    Check "GET /console -> 200" ($console.StatusCode -eq 200) $console.StatusCode
+    $trace = Invoke-WebRequest -Uri "$base/trace" -TimeoutSec 5 -UseBasicParsing
+    Check "GET /trace -> 200" ($trace.StatusCode -eq 200) $trace.StatusCode
+    Check "trace page still has the result column" ($trace.Content -match "整理结果") ""
+    $js = Invoke-WebRequest -Uri "$base/js/api.js" -TimeoutSec 5 -UseBasicParsing
+    Check "GET /js/api.js -> 200" ($js.StatusCode -eq 200) $js.StatusCode
+    $blocked = $false
+    try {
+        Invoke-WebRequest -Uri "$base/js/../.env" -TimeoutSec 5 -UseBasicParsing | Out-Null
+    } catch {
+        $blocked = $true
+    }
+    Check "static routes reject path traversal" $blocked ""
+
+    Write-Host ""
+    Write-Host "[2b] back office login and roles" -ForegroundColor Cyan
+    $anonymous = $false
+    try {
+        Invoke-WebRequest -Uri "$base/api/admin/overview" -TimeoutSec 5 -UseBasicParsing | Out-Null
+    } catch {
+        $anonymous = $true
+    }
+    Check "admin API requires a session" $anonymous ""
+
+    $loginBody = @{ username = "admin"; password = "123456" } | ConvertTo-Json
+    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $login = Invoke-WebRequest -Uri "$base/api/auth/login" -Method Post `
+        -Body ([System.Text.Encoding]::UTF8.GetBytes($loginBody)) `
+        -ContentType "application/json" -WebSession $session -UseBasicParsing -TimeoutSec 10
+    Check "admin login -> 200" ($login.StatusCode -eq 200) $login.StatusCode
+    $me = Invoke-RestMethod -Uri "$base/api/auth/me" -WebSession $session -TimeoutSec 5
+    Check "session identifies the admin" ($me.user.role -eq "admin") $me.user.role
+    $overview = Invoke-RestMethod -Uri "$base/api/admin/overview" -WebSession $session -TimeoutSec 10
+    Check "admin overview returns accounts" ($overview.totals.users -ge 6) $overview.totals.users
+    $users = Invoke-RestMethod -Uri "$base/api/admin/users" -WebSession $session -TimeoutSec 10
+    Check "five mock users plus admin" (@($users.users).Count -ge 6) (@($users.users).Count)
+    $logout = Invoke-WebRequest -Uri "$base/api/auth/logout" -Method Post `
+        -WebSession $session -UseBasicParsing -TimeoutSec 5
+    Check "logout -> 200" ($logout.StatusCode -eq 200) $logout.StatusCode
 
     Write-Host ""
     Write-Host "[3] quota starts at 0/10" -ForegroundColor Cyan

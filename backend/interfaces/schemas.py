@@ -105,3 +105,20 @@ class DeviceCommandIn(BaseModel):
     machine_code: str
     text: str
     idempotency_key: str | None = None
+
+
+# ---------------------------------------------------------------- back office
+class LoginIn(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class PasswordChangeIn(BaseModel):
+    current: str = Field(min_length=1, max_length=200)
+    new: str = Field(min_length=6, max_length=200)
+
+
+class UserPatchIn(BaseModel):
+    # Only the plan is editable: accounts are demo fixtures, and deleting them
+    # would break the recording.
+    plan: str | None = Field(default=None, pattern="^(free|pro)$")

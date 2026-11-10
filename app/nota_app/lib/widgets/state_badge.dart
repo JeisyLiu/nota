@@ -12,6 +12,7 @@ class StateBadge extends StatelessWidget {
     'agent_running': '整理中',
     'done': '已完成',
     'failed': '失败',
+    'cancelled': '已停止',
   };
 
   @override
@@ -26,6 +27,9 @@ class StateBadge extends StatelessWidget {
       case 'failed':
         fg = const Color(0xFFF87171);
         bg = const Color(0xFF3A1F22);
+      case 'cancelled':
+        fg = const Color(0xFFFBBF24);
+        bg = const Color(0xFF2A2416);
       default:
         fg = const Color(0xFF38BDF8);
         bg = const Color(0xFF23303F);

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -179,6 +180,47 @@ def get_job(request: Request, job_id: str):
         if job is None:
             raise HTTPException(status_code=404, detail={"error": "job_not_found"})
         return _job_payload(conn, job)
+
+
+@router.post("/api/jobs/{job_id}/cancel")
+def cancel_job(request: Request, job_id: str):
+    """Stop a queued or running job and return the reserved request.
+
+    Cancelling is a user action, not a failure: the state is ``cancelled`` (no
+    retry, no error message) and the quota unit goes back. The worker checks for
+    this state between phases so it stops paying for work nobody wants.
+    """
+    c = _container(request)
+    user_id = _user(request)
+    with c.db.session() as conn:
+        job = repos.get_job(conn, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail={"error": "job_not_found"})
+        if job["user_id"] != user_id:
+            raise HTTPException(status_code=404, detail={"error": "job_not_found"})
+
+        already = job["state"] in jobstates.TERMINAL
+        if not already:
+            try:
+                jobstates.assert_transition(job["state"], jobstates.CANCELLED)
+            except jobstates.InvalidTransition as exc:
+                raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
+            with write_tx(conn):
+                # Conditional: the worker may have advanced the state while we
+                # were validating, and whoever committed last must not win blindly.
+                applied = repos.set_job_state_if(
+                    conn, job_id, job["state"], jobstates.CANCELLED, clock=c.clock
+                )
+            already = not applied
+
+    if not already:
+        # Outside the write transaction: it opens its own session.
+        c.quota.refund(user_id, job_id)
+
+    with c.db.session() as conn:
+        job = repos.get_job(conn, job_id)
+        payload = _job_payload(conn, job)
+    return {"cancelled": not already, "job": payload}
 
 
 @router.get("/api/jobs/{job_id}/steps", response_model=list[StepOut])
@@ -418,6 +460,111 @@ def device_status(request: Request, machine_code: str):
         "recent": [{"note_id": r["id"], "state": r["state"],
                     "transcript": (r["transcript"] or "")[:60]} for r in rows],
     }
+
+
+_streaming_cache: dict[tuple[str, str], Any] = {}
+
+
+def _streaming(c):
+    """One preview transcriber per (model, data dir), shared across connections."""
+    key = (c.settings.stt_stream_model, str(c.settings.data_dir))
+    instance = _streaming_cache.get(key)
+    if instance is None:
+        from ..infrastructure.stt.streaming import StreamingTranscriber
+
+        instance = StreamingTranscriber(
+            model_size=c.settings.stt_stream_model,
+            local_pylibs=os.environ.get("NOTA_PYLIB_DIR", ""),
+            download_root=str(Path(c.settings.data_dir) / "models"),
+        )
+        _streaming_cache[key] = instance
+    return instance
+
+
+def _partial_text(c, window: bytes) -> str:
+    from ..infrastructure.stt.streaming import pcm16_to_float
+
+    return _streaming(c).transcribe(pcm16_to_float(window))
+
+
+def _final_text(c, pcm: bytes) -> str:
+    """Transcribe the whole clip with the configured (accurate) model."""
+    if not pcm:
+        return ""
+    import wave
+
+    path = Path(c.settings.data_dir) / f"stream-{uuid.uuid4().hex[:12]}.wav"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(pcm)
+    try:
+        return c.stt.transcribe(str(path)).text
+    finally:
+        path.unlink(missing_ok=True)
+
+
+@router.websocket("/ws/transcribe")
+async def transcribe_socket(websocket: WebSocket):
+    """Live transcription preview.
+
+    The client streams raw 16 kHz mono 16-bit PCM frames and gets ``partial``
+    messages back while the user is still speaking; ``{"type":"final"}`` asks for
+    one pass with the accurate model. This is a preview only -- the authoritative
+    transcript comes from the uploaded file, so a dropped preview costs nothing.
+    """
+    c = websocket.app.state.container
+    await websocket.accept()
+    await websocket.send_json({"type": "ready", "model": c.settings.stt_stream_model})
+
+    pcm = bytearray()
+    transcribed_upto = 0
+    min_new = 16000 * 2 * 3 // 5      # re-run once 0.6 s of new audio arrived
+    window_bytes = 16000 * 2 * 15     # preview covers at most the last 15 s
+
+    try:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+
+            chunk = message.get("bytes")
+            if chunk:
+                pcm.extend(chunk)
+                if len(pcm) - transcribed_upto >= min_new:
+                    transcribed_upto = len(pcm)
+                    try:
+                        text = await asyncio.to_thread(_partial_text, c, bytes(pcm[-window_bytes:]))
+                    except Exception as exc:  # noqa: BLE001 - preview must not kill the socket
+                        await websocket.send_json({"type": "error", "message": str(exc)})
+                        break
+                    await websocket.send_json({"type": "partial", "text": text})
+                continue
+
+            try:
+                payload = json.loads(message.get("text") or "{}")
+            except json.JSONDecodeError:
+                continue
+            kind = payload.get("type")
+            if kind == "cancel":
+                break
+            if kind == "final":
+                try:
+                    text = await asyncio.to_thread(_final_text, c, bytes(pcm))
+                except Exception as exc:  # noqa: BLE001
+                    await websocket.send_json({"type": "error", "message": str(exc)})
+                    break
+                await websocket.send_json({"type": "final", "text": text})
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:  # noqa: BLE001 - already closed
+            pass
 
 
 @router.websocket("/ws/device")

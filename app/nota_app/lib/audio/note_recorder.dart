@@ -32,6 +32,14 @@ abstract class NoteRecorder {
   /// truthful filename.
   String get fileExtension;
 
+  /// True when the recorder can hand back audio while it is still recording,
+  /// which is what makes the live transcription preview possible.
+  bool get supportsStreaming => false;
+
+  /// PCM (16 kHz mono, 16-bit little-endian) captured since the previous call.
+  /// Empty when streaming is unsupported or nothing new arrived.
+  Future<Uint8List> readChunk() async => Uint8List(0);
+
   Future<bool> hasPermission();
 
   /// Starts capturing into [path] (ignored on web, where the plugin returns a
@@ -60,6 +68,15 @@ class PluginNoteRecorder implements NoteRecorder {
 
   @override
   String get fileExtension => 'm4a';
+
+  // The plugin writes the file only when recording stops, so there is nothing to
+  // hand back mid-recording. The UI falls back to showing the transcript once
+  // the note is done.
+  @override
+  bool get supportsStreaming => false;
+
+  @override
+  Future<Uint8List> readChunk() async => Uint8List(0);
 
   @override
   Future<bool> hasPermission() => _recorder.hasPermission();
@@ -102,6 +119,20 @@ class WindowsNoteRecorder implements NoteRecorder {
 
   @override
   String get fileExtension => 'wav';
+
+  @override
+  bool get supportsStreaming => true;
+
+  @override
+  Future<Uint8List> readChunk() async {
+    try {
+      final chunk = await _channel.invokeMethod<Uint8List>('readChunk');
+      return chunk ?? Uint8List(0);
+    } catch (_) {
+      // Preview only; a failed read must not disturb the recording.
+      return Uint8List(0);
+    }
+  }
 
   @override
   Future<bool> hasPermission() async {

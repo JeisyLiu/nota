@@ -1,11 +1,13 @@
 """End-to-end pipeline tests against the real HTTP layer (scripted model)."""
 import json
+from datetime import datetime, timezone
 
 import pytest
 from starlette.testclient import TestClient
 
 from backend.config import Settings
 from backend.domain import jobs as jobstates
+from backend.infrastructure.clock import FixedClock
 from backend.infrastructure.db import Database
 from backend.interfaces.app import create_app
 
@@ -24,6 +26,11 @@ def client(tmp_path):
     settings.ensure_dirs()
     app = create_app(settings, start_worker=False)
     with TestClient(app) as c:
+        # Pin now: these assertions use relative dates like "明天", which would
+        # silently start failing the day the wall clock moved on.
+        c.app.state.container.use_clock(
+            FixedClock(datetime(2026, 11, 9, 2, 0, 0, tzinfo=timezone.utc))
+        )
         yield c
 
 
@@ -162,3 +169,65 @@ def test_ask_without_history_never_calls_the_model(client):
     assert answer["retrieved"] == 0
     assert answer["citations"] == []
     assert "没有" in answer["answer"]
+
+
+def test_cancelling_a_queued_job_refunds_the_request(client):
+    """Stop is a user action, not a failure: no retry, no error, quota returned."""
+    before = client.get("/api/quota").json()
+    created = client.post("/api/notes/text", json={"text": "明天下午三点提醒我给张总发报价单"}).json()
+    job_id = created["job_id"]
+
+    reserved = client.get("/api/quota").json()
+    assert reserved["used"] == before["used"] + 1, "submitting must reserve one request"
+
+    response = client.post(f"/api/jobs/{job_id}/cancel")
+    assert response.status_code == 200
+    assert response.json()["cancelled"] is True
+    assert response.json()["job"]["state"] == jobstates.CANCELLED
+
+    after = client.get("/api/quota").json()
+    assert after["used"] == before["used"], "a cancelled request must be refunded"
+
+    # The job must not be picked up afterwards.
+    assert client.app.state.container.pipeline.run_next() is False
+    assert client.get(f"/api/jobs/{job_id}").json()["state"] == jobstates.CANCELLED
+
+
+def test_cancelling_a_finished_job_is_a_no_op(client):
+    created = client.post("/api/notes/text", json={"text": "买咖啡豆"}).json()
+    job_id = created["job_id"]
+    client.app.state.container.pipeline.run_next()
+    assert client.get(f"/api/jobs/{job_id}").json()["state"] == jobstates.DONE
+
+    before = client.get("/api/quota").json()
+    response = client.post(f"/api/jobs/{job_id}/cancel")
+    assert response.status_code == 200
+    assert response.json()["cancelled"] is False
+    assert response.json()["job"]["state"] == jobstates.DONE
+    # Nothing to refund: the work was actually done.
+    assert client.get("/api/quota").json()["used"] == before["used"]
+
+
+def test_cancelling_an_unknown_job_is_404(client):
+    assert client.post("/api/jobs/job_doesnotexist/cancel").status_code == 404
+
+
+def test_worker_cannot_resurrect_a_cancelled_job(client):
+    """The worker keeps a transaction open; a cancel must not be overwritten.
+
+    This is the lost-update race that made a cancelled job report agent_running
+    again (and spend the already-refunded request) before the state write became
+    conditional.
+    """
+    from backend.application.pipeline import _JobCancelled
+    from backend.infrastructure import repos
+
+    created = client.post("/api/notes/text", json={"text": "买咖啡豆"}).json()
+    job_id = created["job_id"]
+    client.post(f"/api/jobs/{job_id}/cancel")
+
+    container = client.app.state.container
+    with container.db.session() as conn:
+        with pytest.raises(_JobCancelled):
+            container.pipeline._move(conn, job_id, jobstates.AGENT_RUNNING)
+        assert repos.get_job(conn, job_id)["state"] == jobstates.CANCELLED

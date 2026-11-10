@@ -60,6 +60,7 @@ from starlette.testclient import TestClient  # noqa: E402
 
 from backend.config import Settings  # noqa: E402
 from backend.domain import jobs as jobstates  # noqa: E402
+from backend.infrastructure.clock import FixedClock  # noqa: E402
 from backend.interfaces.app import create_app  # noqa: E402
 
 
@@ -70,6 +71,10 @@ def client(tmp_path):
                         retry_backoff_seconds=(0,))
     settings.ensure_dirs()
     with TestClient(create_app(settings, start_worker=False)) as c:
+        # Pin now so relative dates ("明天下午三点") stay deterministic.
+        c.app.state.container.use_clock(
+            FixedClock(datetime(2026, 11, 9, 2, 0, 0, tzinfo=timezone.utc))
+        )
         yield c
 
 

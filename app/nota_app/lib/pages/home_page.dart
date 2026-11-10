@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:path_provider/path_provider.dart';
 
+import '../api/live_transcriber.dart';
 import '../api/nota_client.dart';
 import '../audio/note_recorder.dart';
 import '../models/models.dart';
@@ -36,6 +37,11 @@ class _HomePageState extends State<HomePage> {
   bool _busy = false;
   DateTime? _recordStartedAt;
 
+  /// Live transcription preview: what the user is saying, right now.
+  LiveTranscriber? _live;
+  Timer? _pump;
+  String _liveText = '';
+
   /// Below this, the clip is a stray click rather than a sentence. Sending it
   /// would burn a quota unit and produce a whisper "no speech" failure.
   static const _minRecordMs = 700;
@@ -50,6 +56,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _statusTimer?.cancel();
+    _stopLivePreview();
     _recorder.dispose();
     _textController.dispose();
     widget.client.dispose();
@@ -138,7 +145,9 @@ class _HomePageState extends State<HomePage> {
         _recording = true;
         _status = '正在录音…';
         _statusError = false;
+        _liveText = '';
       });
+      _startLivePreview();
     } catch (e) {
       if (!mounted) return;
       _recordStartedAt = null;
@@ -178,8 +187,51 @@ class _HomePageState extends State<HomePage> {
     return '无法开始录音：$text';
   }
 
+  /// Starts pumping captured PCM to the preview socket.
+  ///
+  /// Only some platforms can hand back audio mid-recording (Windows can, through
+  /// the native recorder); elsewhere the button still works, it just shows the
+  /// transcript when the note is done instead of while speaking.
+  void _startLivePreview() {
+    if (!_recorder.supportsStreaming) return;
+    _stopLivePreview();
+    final live = LiveTranscriber(baseUrl: widget.client.baseUrl);
+    _live = live;
+    live.text.addListener(_onLiveText);
+    unawaited(live.connect());
+    _pump = Timer.periodic(const Duration(milliseconds: 160), (_) async {
+      final chunk = await _recorder.readChunk();
+      if (chunk.isNotEmpty) {
+        live.send(chunk);
+      }
+    });
+  }
+
+  void _onLiveText() {
+    final live = _live;
+    if (live == null || !mounted) return;
+    final value = live.text.value;
+    if (value == _liveText) return;
+    setState(() => _liveText = value);
+  }
+
+  void _stopLivePreview() {
+    _pump?.cancel();
+    _pump = null;
+    final live = _live;
+    _live = null;
+    if (live != null) {
+      live.text.removeListener(_onLiveText);
+      unawaited(live.close());
+      live.dispose();
+    }
+  }
+
   Future<void> _stopRecording() async {
     try {
+      // Stop the preview first: the recording is over, and leaving the socket
+      // open would keep a transcription worker busy for nothing.
+      _stopLivePreview();
       // Wait for a still-running start, otherwise stop() hits an unstarted
       // recorder and the clip is dropped. Bounded, because a hung platform call
       // must not leave the button unresponsive forever.
@@ -274,26 +326,21 @@ class _HomePageState extends State<HomePage> {
     try {
       final created = await submit();
       final jobId = created['job_id'] as String;
-      setState(() {
-        _status = 'Agent 正在处理…';
-        _statusError = false;
-      });
-      final job = await widget.client.waitFor(jobId);
       if (!mounted) return;
       setState(() {
         _status = null;
         _statusError = false;
-        _busy = false;
+        _liveText = '';
       });
-      await _refresh();
+      // Open the detail page straight away: it shows the pipeline steps as they
+      // happen and owns the stop button, which is far more useful than a single
+      // "processing…" line on this screen.
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => DetailPage(client: widget.client, jobId: jobId, live: true),
+      ));
       if (!mounted) return;
-      if (job.state == 'failed') {
-        _toast('处理失败：${job.error ?? '未知错误'}（额度已退回）', error: true);
-      } else {
-        await Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => DetailPage(client: widget.client, jobId: jobId),
-        ));
-      }
+      setState(() => _busy = false);
+      await _refresh();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -435,6 +482,26 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Live preview of what the mic is hearing, while it is hearing it.
+              // Shown above the status line because it is the thing that moves.
+              if (_recording && _liveText.isNotEmpty) ...[
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 68),
+                  child: SingleChildScrollView(
+                    reverse: true,
+                    child: Text(
+                      _liveText,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        height: 1.45,
+                        color: Color(0xFFE6E8EE),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+              ],
               if (_status != null) ...[
                 Text(
                   _status!,

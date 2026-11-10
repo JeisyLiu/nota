@@ -72,6 +72,10 @@ class Settings:
 
     stt_provider: str = "faster_whisper"
     whisper_model: str = "small"
+    # Model used for the live preview while recording. Smaller than
+    # whisper_model on purpose: the preview is re-run every fraction of a second
+    # over the audio so far, so it has to be fast enough to keep up with speech.
+    stt_stream_model: str = "base"
 
     free_daily_limit: int = 10
     host: str = "127.0.0.1"
@@ -204,6 +208,7 @@ def load_settings(root: Path | None = None, *, load_env: bool = True) -> Setting
         llm_trust_env=_env_bool("LLM_TRUST_ENV", True),
         stt_provider=_env("STT_PROVIDER", "faster_whisper").lower(),
         whisper_model=_env("WHISPER_MODEL", "small"),
+        stt_stream_model=_env("STT_STREAM_MODEL", "base"),
         free_daily_limit=_env_int("FREE_DAILY_LIMIT", 10),
         host=_env("HOST", "127.0.0.1"),
         port=_env_int("PORT", 8787),

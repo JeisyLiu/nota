@@ -67,6 +67,7 @@ bool AudioRecorder::Start(const std::string& path, std::string* error) {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     pcm_.clear();
+    read_offset_ = 0;
     pcm_.reserve(static_cast<size_t>(kAvgBytesPerSec) * 30);
   }
   path_ = path;
@@ -309,4 +310,16 @@ void AudioRecorder::Cancel() {
   }
   std::lock_guard<std::mutex> lock(mutex_);
   pcm_.clear();
+  read_offset_ = 0;
+}
+
+std::vector<uint8_t> AudioRecorder::ReadChunk() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (read_offset_ >= pcm_.size()) {
+    return {};
+  }
+  std::vector<uint8_t> out(pcm_.begin() + static_cast<std::ptrdiff_t>(read_offset_),
+                           pcm_.end());
+  read_offset_ = pcm_.size();
+  return out;
 }

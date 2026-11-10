@@ -137,11 +137,42 @@ def set_job_state(conn: sqlite3.Connection, job_id: str, state: str, *,
     if state in ("transcribing", "agent_running"):
         sets.append("started_at = COALESCE(started_at, ?)")
         params.append((clock or Clock()).now_iso())
-    if state in ("done", "failed"):
+    if state in ("done", "failed", "cancelled"):
         sets.append("finished_at = ?")
         params.append((clock or Clock()).now_iso())
     params.append(job_id)
     conn.execute(f"UPDATE jobs SET {', '.join(sets)} WHERE id = ?", params)
+
+
+def set_job_state_if(conn: sqlite3.Connection, job_id: str, expected: str, state: str,
+                     *, error: str | None = None, bump_attempts: bool = False,
+                     clock: Clock | None = None) -> bool:
+    """Compare-and-set on the job state.
+
+    The worker keeps a transaction open for the whole run. Without this guard a
+    cancel committed in the meantime is silently overwritten by the worker's
+    later commit -- the job springs back to running after the user stopped it,
+    and the already-refunded request gets spent anyway. Returns False when the
+    row no longer matches ``expected``.
+    """
+    sets = ["state = ?"]
+    params: list[Any] = [state]
+    if error is not None:
+        sets.append("last_error = ?")
+        params.append(error)
+    if bump_attempts:
+        sets.append("attempts = attempts + 1")
+    if state in ("transcribing", "agent_running"):
+        sets.append("started_at = COALESCE(started_at, ?)")
+        params.append((clock or Clock()).now_iso())
+    if state in ("done", "failed", "cancelled"):
+        sets.append("finished_at = ?")
+        params.append((clock or Clock()).now_iso())
+    params.extend([job_id, expected])
+    cur = conn.execute(
+        f"UPDATE jobs SET {', '.join(sets)} WHERE id = ? AND state = ?", params
+    )
+    return cur.rowcount == 1
 
 
 def claim_next_job(conn: sqlite3.Connection, clock: Clock) -> sqlite3.Row | None:

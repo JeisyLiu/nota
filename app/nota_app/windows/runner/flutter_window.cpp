@@ -72,6 +72,13 @@ void FlutterWindow::RegisterAudioChannel() {
           return;
         }
 
+        if (method == "readChunk") {
+          // PCM captured since the previous call, for the live preview.
+          std::vector<uint8_t> chunk = audio_recorder_->ReadChunk();
+          result->Success(flutter::EncodableValue(std::move(chunk)));
+          return;
+        }
+
         result->NotImplemented();
       });
 }

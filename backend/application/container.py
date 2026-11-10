@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -53,5 +55,46 @@ class AppContainer:
                         pipeline=pipeline)
         if start_worker:
             pipeline.start()
+        _preload_stream_model(settings, stt)
         log.info("nota ready: provider=%s stt=%s db=%s", model.name, stt.name, settings.db_path)
         return container
+
+    def use_clock(self, clock: Clock) -> None:
+        """Replace the clock on every collaborator.
+
+        Relative dates ("tomorrow at three") make any test that runs against the
+        real clock start failing once the wall clock rolls over midnight. Tests
+        and the eval suite pin a fixed instant through this instead of
+        monkey-patching each service.
+        """
+        self.clock = clock
+        for collaborator in (self.quota, self.memory, self.registry, self.harness,
+                             self.pipeline):
+            if hasattr(collaborator, "_clock"):
+                collaborator._clock = clock
+
+
+def _preload_stream_model(settings, stt) -> None:
+    """Warm the live-preview model in the background.
+
+    Cold loading it takes ~20 s here; paying that on the first press of the record
+    button looks like the feature is broken. Failures are ignored on purpose: the
+    preview is optional, and a machine without faster-whisper should still start.
+    """
+    if getattr(stt, "name", "") != "faster_whisper":
+        return
+
+    def run() -> None:
+        try:
+            from ..infrastructure.stt.streaming import preload
+
+            preload(
+                model_size=settings.stt_stream_model,
+                local_pylibs=os.environ.get("NOTA_PYLIB_DIR", ""),
+                download_root=str(Path(settings.data_dir) / "models"),
+            )
+            log.info("stream model ready: %s", settings.stt_stream_model)
+        except Exception as exc:  # noqa: BLE001 - preview is optional
+            log.warning("stream model unavailable: %s", exc)
+
+    threading.Thread(target=run, name="nota-stream-preload", daemon=True).start()

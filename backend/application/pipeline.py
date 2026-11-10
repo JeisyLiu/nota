@@ -22,6 +22,14 @@ from .quota_service import QuotaService
 log = logging.getLogger("nota.pipeline")
 
 
+class _JobCancelled(Exception):
+    """Internal signal: the user stopped this job, so unwind without failing it.
+
+    Not an error path: no retry, no error message, and no second refund (the
+    cancel endpoint already returned the reserved request).
+    """
+
+
 class Pipeline:
     def __init__(self, *, db: Database, settings, clock: Clock, quota: QuotaService,
                  memory: MemoryService, harness: AgentHarness, stt, model):
@@ -74,6 +82,8 @@ class Pipeline:
             job = repos.get_job(conn, job_id)
             if job is None:
                 return
+            if job["state"] == jobstates.CANCELLED:
+                return
             if job["state"] == jobstates.QUEUED:
                 self._move(conn, job_id, jobstates.TRANSCRIBING)
             note = repos.get_note(conn, job["note_id"])
@@ -89,6 +99,11 @@ class Pipeline:
                     result = self._stt.transcribe(note["audio_path"])
                     transcript, lang = result.text, result.lang
                     repos.set_transcript(conn, note["id"], transcript, lang)
+
+                # The user may have pressed stop while we were transcribing;
+                # checking here avoids paying for an agent run nobody wants.
+                if self._cancelled(conn, job_id):
+                    return
 
                 self._move(conn, job_id, jobstates.AGENT_RUNNING)
 
@@ -116,27 +131,49 @@ class Pipeline:
                                        tokens_in=outcome.usage.tokens_in,
                                        tokens_out=outcome.usage.tokens_out, latency_ms=latency)
 
+                # Stop pressed during the agent run: keep the trace (it is
+                # already recorded and worth seeing) but do not pretend the note
+                # succeeded, and do not write a summary the user cancelled.
+                if self._cancelled(conn, job_id):
+                    return
+
                 title = _title_from(transcript)
                 repos.upsert_summary(conn, note["id"], title, outcome.summary, self._clock)
                 self._memory.index_note(conn, user_id=job["user_id"], note_id=note["id"],
                                         text=transcript)
 
                 self._move(conn, job_id, jobstates.DONE)
+            except _JobCancelled:
+                log.info("job %s cancelled mid-run", job_id)
+                return
             except Exception as exc:  # noqa: BLE001 - any failure must release the quota
                 log.warning("job %s failed: %s", job_id, exc)
                 self._fail(conn, job, str(exc))
 
     # ------------------------------------------------------------------ helpers
+    def _cancelled(self, conn, job_id: str) -> bool:
+        row = repos.get_job(conn, job_id)
+        return row is not None and row["state"] == jobstates.CANCELLED
+
     def _move(self, conn, job_id: str, dst: str) -> None:
         job = repos.get_job(conn, job_id)
         src = job["state"]
         if src == dst:
             return
+        # A cancelled job is finished as far as the worker is concerned; racing
+        # it with a late state change would resurrect something the user stopped.
+        if src == jobstates.CANCELLED:
+            raise _JobCancelled(job_id)
         if not jobstates.can_transition(src, dst):
             raise jobstates.InvalidTransition(src, dst)
-        repos.set_job_state(conn, job_id, dst, clock=self._clock)
+        # Conditional write: a cancel committed by another connection during this
+        # transaction must win, not be overwritten by our commit.
+        if not repos.set_job_state_if(conn, job_id, src, dst, clock=self._clock):
+            raise _JobCancelled(job_id)
 
     def _fail(self, conn, job, error: str) -> None:
+        if job["state"] == jobstates.CANCELLED:
+            return
         attempts = int(job["attempts"] or 0)
         backoff_table = tuple(self._settings.retry_backoff_seconds)
         if attempts < self._settings.job_max_attempts:

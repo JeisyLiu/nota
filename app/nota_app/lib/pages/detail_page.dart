@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -7,11 +8,20 @@ import '../models/models.dart';
 import '../widgets/state_badge.dart';
 
 /// 单条记录：摘要 + 待办 / 提醒 + Agent Trace + 待确认动作。
+///
+/// When [live] is true the page keeps polling, so the steps appear one by one
+/// while the agent is still working, and the stop button can interrupt it.
 class DetailPage extends StatefulWidget {
-  const DetailPage({super.key, required this.client, required this.jobId});
+  const DetailPage({
+    super.key,
+    required this.client,
+    required this.jobId,
+    this.live = false,
+  });
 
   final NotaClient client;
   final String jobId;
+  final bool live;
 
   @override
   State<DetailPage> createState() => _DetailPageState();
@@ -22,14 +32,28 @@ class _DetailPageState extends State<DetailPage> {
   List<AgentStep> _steps = const [];
   List<PendingAction> _actions = const [];
   bool _loading = true;
+  bool _stopping = false;
+  Timer? _poll;
+
+  /// Terminal states: nothing more will happen, stop polling.
+  static const _terminal = {'done', 'failed', 'cancelled'};
 
   @override
   void initState() {
     super.initState();
     _load();
+    if (widget.live) {
+      _poll = Timer.periodic(const Duration(milliseconds: 700), (_) => _load(quiet: true));
+    }
   }
 
-  Future<void> _load() async {
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load({bool quiet = false}) async {
     try {
       final job = await widget.client.job(widget.jobId);
       final steps = await widget.client.steps(widget.jobId);
@@ -41,11 +65,36 @@ class _DetailPageState extends State<DetailPage> {
         _actions = actions;
         _loading = false;
       });
+      if (_terminal.contains(job.state) || job.state == 'cancelled') {
+        _poll?.cancel();
+        _poll = null;
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('加载失败：$e')));
+      if (!quiet) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('加载失败：$e')));
+      }
+    }
+  }
+
+  Future<void> _stopJob() async {
+    setState(() => _stopping = true);
+    try {
+      final job = await widget.client.cancel(widget.jobId);
+      if (!mounted) return;
+      setState(() {
+        _job = job;
+        _stopping = false;
+      });
+      _poll?.cancel();
+      _poll = null;
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _stopping = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     }
   }
 
@@ -81,6 +130,26 @@ class _DetailPageState extends State<DetailPage> {
         backgroundColor: const Color(0xFF101318),
         title: const Text('整理结果', style: TextStyle(fontSize: 16)),
         actions: [
+          // Only meaningful while work is in flight; once the job is terminal
+          // there is nothing left to stop.
+          if (job != null && !_terminal.contains(job.state))
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: TextButton.icon(
+                onPressed: _stopping ? null : _stopJob,
+                icon: _stopping
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.stop_circle_outlined, size: 18),
+                label: const Text('停止', style: TextStyle(fontSize: 13)),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFFFBBF24),
+                ),
+              ),
+            ),
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
         ],
       ),
@@ -126,7 +195,9 @@ class _DetailPageState extends State<DetailPage> {
                         job.summary ??
                             (job.state == 'failed'
                                 ? '处理失败：${job.error ?? '未知错误'}（本次额度已退回）'
-                                : '正在处理…'),
+                                : job.state == 'cancelled'
+                                    ? '已停止，本次额度已退回。没有生成待办或提醒。'
+                                    : '正在处理…'),
                         style: const TextStyle(fontSize: 14, height: 1.6),
                       ),
                     ),

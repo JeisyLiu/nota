@@ -42,6 +42,11 @@ class AudioRecorder {
   bool Stop(std::string* error);
   void Cancel();
 
+  // Returns the PCM captured since the previous call, so the UI can stream it to
+  // the live transcription preview without recording twice. The WAV written by
+  // Stop() still contains the whole clip.
+  std::vector<uint8_t> ReadChunk();
+
   bool recording() const { return recording_.load(); }
 
  private:
@@ -55,6 +60,7 @@ class AudioRecorder {
 
   std::mutex mutex_;
   std::vector<uint8_t> pcm_;
+  size_t read_offset_ = 0;
   std::string path_;
 };
 

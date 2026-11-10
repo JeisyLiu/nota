@@ -124,6 +124,15 @@ class NotaClient {
   Future<NoteJob> jobForNote(String noteId) async =>
       NoteJob.fromJson(await _getJson('/api/notes/$noteId/job'));
 
+  /// Stops a queued or running job. The backend refunds the reserved request, so
+  /// the user does not pay for work they cancelled.
+  Future<NoteJob> cancel(String jobId) async {
+    final res = await _client.post(_uri('/api/jobs/$jobId/cancel'), headers: _headers);
+    if (res.statusCode != 200) _fail(res);
+    final body = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+    return NoteJob.fromJson(body['job'] as Map<String, dynamic>);
+  }
+
   Future<List<NoteSummary>> notes({int limit = 30}) async {
     final res = await _client.get(_uri('/api/notes?limit=$limit'), headers: _headers);
     if (res.statusCode != 200) _fail(res);

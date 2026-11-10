@@ -11,19 +11,23 @@ TRANSCRIBING = "transcribing"
 AGENT_RUNNING = "agent_running"
 DONE = "done"
 FAILED = "failed"
+# The user asked us to stop. Terminal, and distinct from failed: nothing went
+# wrong, so it must not be retried and the reserved request is returned.
+CANCELLED = "cancelled"
 
-ALL_STATES = (QUEUED, TRANSCRIBING, AGENT_RUNNING, DONE, FAILED)
+ALL_STATES = (QUEUED, TRANSCRIBING, AGENT_RUNNING, DONE, FAILED, CANCELLED)
 
 # src -> allowed destinations
 _TRANSITIONS: dict[str, frozenset[str]] = {
-    QUEUED: frozenset({TRANSCRIBING, AGENT_RUNNING, FAILED}),
-    TRANSCRIBING: frozenset({AGENT_RUNNING, FAILED, QUEUED}),  # QUEUED = retry
-    AGENT_RUNNING: frozenset({DONE, FAILED, QUEUED}),
+    QUEUED: frozenset({TRANSCRIBING, AGENT_RUNNING, FAILED, CANCELLED}),
+    TRANSCRIBING: frozenset({AGENT_RUNNING, FAILED, QUEUED, CANCELLED}),
+    AGENT_RUNNING: frozenset({DONE, FAILED, QUEUED, CANCELLED}),
     DONE: frozenset(),
     FAILED: frozenset({QUEUED}),  # explicit manual retry only
+    CANCELLED: frozenset(),
 }
 
-TERMINAL = frozenset({DONE, FAILED})
+TERMINAL = frozenset({DONE, FAILED, CANCELLED})
 
 
 class InvalidTransition(Exception):
